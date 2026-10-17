@@ -1,0 +1,113 @@
+# ---------------------------------------------------------------------------
+# Secrets and environment. Keep real values out of git; document variables in
+# .env.example instead.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.env
+!*.env.example
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.jks
+id_rsa*
+id_ed25519*
+credentials*.json
+service-account*.json
+secrets/
+.secrets/
+
+# ---------------------------------------------------------------------------
+# Go (backend)
+# ---------------------------------------------------------------------------
+backend/bin/
+backend/tmp/
+backend/uploads/
+*.exe
+*.test
+*.out
+*.prof
+coverage.out
+coverage.html
+# Compiled binaries produced by `go build ./cmd/...` in the backend root
+/backend/api
+/backend/worker
+/backend/emailctl
+go.work
+go.work.sum
+vendor/
+
+# ---------------------------------------------------------------------------
+# Node (frontend)
+# ---------------------------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+*.tsbuildinfo
+.eslintcache
+.npm/
+.pnpm-store/
+.yarn/*
+!.yarn/patches
+!.yarn/releases
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.local
+
+# ---------------------------------------------------------------------------
+# Docker / local infrastructure data
+# ---------------------------------------------------------------------------
+docker-compose.override.yml
+docker-compose.override.yaml
+postgres_data/
+mongo_data/
+redis_data/
+clickhouse_data/
+dump.rdb
+*.sql.gz
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+
+# ---------------------------------------------------------------------------
+# Logs and temp files
+# ---------------------------------------------------------------------------
+logs/
+*.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Editors, OS and tooling
+# ---------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.iml
+*.sublime-workspace
+.history/
+
+# Claude Code: personal/local state stays local; project skills stay tracked
+.claude/settings.local.json
+.claude/*.local.*
+.claude/projects/
+.claude/worktrees/
+CLAUDE.local.md

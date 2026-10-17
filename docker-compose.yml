@@ -51,6 +51,62 @@ services:
     depends_on:
       - clickhouse
 
+  # --- Application services (start with: docker compose --profile app up -d --build) ---
+  # Both read secrets from .env; the *_URI / endpoint values below override it so
+  # the containers reach each other by service name instead of localhost.
+
+  api:
+    profiles: ["app"]
+    build:
+      context: ./backend
+      target: api
+    env_file: .env
+    environment:
+      POSTGRES_URI: postgres://postgres:password@postgres:5432/alibi?sslmode=disable
+      MONGO_URI: mongodb://mongo:27017
+      REDIS_URI: redis://redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4318
+      OLLAMA_HOST: http://host.docker.internal:11434
+      HTTP_ADDR: ":8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - mongo
+      - redis
+      - otel-collector
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+  # The email worker is a separate service: it consumes queue:email:outbound and
+  # sends through Brevo. It has no published port, so it can be scaled:
+  #   docker compose --profile app up -d --scale email-worker=3
+  email-worker:
+    profiles: ["app"]
+    build:
+      context: ./backend
+      target: worker
+    env_file: .env
+    environment:
+      REDIS_URI: redis://redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4318
+      WORKER_HTTP_ADDR: ":8081"
+    depends_on:
+      - redis
+      - otel-collector
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   mongo_data:

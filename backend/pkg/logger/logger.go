@@ -22,8 +22,10 @@ import (
 // endpoint is host:port of the OTLP/HTTP receiver (e.g. localhost:4318).
 // The returned function flushes and shuts down the exporters.
 func Init(ctx context.Context, serviceName, endpoint string) (func(context.Context) error, error) {
-	res, err := resource.Merge(resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName(serviceName)))
+	// Schemaless on purpose: a resource carrying its own schema URL fails to
+	// merge with resource.Default() whenever the SDK moves to a newer semconv
+	// version ("conflicting Schema URL"), which would stop every service at boot.
+	res, err := resource.Merge(resource.Default(), resource.NewSchemaless(semconv.ServiceName(serviceName)))
 	if err != nil {
 		return nil, err
 	}

@@ -185,3 +185,68 @@ func TestIdenticalPayloadsHaveIndependentRetryCounts(t *testing.T) {
 		t.Fatalf("jobs = %v, want the one failing message", items)
 	}
 }
+
+func TestInspectionAndRequeueFromDLQ(t *testing.T) {
+	b, mr := newBroker(t) // dlq name is "dlq"
+	ctx := context.Background()
+	for _, p := range []string{"first", "second", "third"} {
+		_ = b.Publish(ctx, "dlq", []byte(p))
+	}
+	if n, _ := b.Len(ctx, "dlq"); n != 3 {
+		t.Fatalf("len = %d", n)
+	}
+
+	// Peek is oldest-first and non-destructive.
+	got, err := b.Peek(ctx, "dlq", 2)
+	if err != nil || len(got) != 2 || string(got[0].Payload) != "first" || string(got[1].Payload) != "second" {
+		t.Fatalf("peek = %+v %v", got, err)
+	}
+	if n, _ := b.Len(ctx, "dlq"); n != 3 {
+		t.Fatal("peek must not remove messages")
+	}
+
+	// Requeue moves oldest first and resets attempts so they can retry fully.
+	moved, err := b.Requeue(ctx, "dlq", "jobs", 2)
+	if err != nil || moved != 2 {
+		t.Fatalf("moved = %d %v", moved, err)
+	}
+	if items := payloads(mr, "jobs"); len(items) != 2 {
+		t.Fatalf("jobs = %v", items)
+	}
+	if items := payloads(mr, "dlq"); len(items) != 1 || items[0] != "third" {
+		t.Fatalf("dlq = %v", items)
+	}
+	var seen []string
+	for i := 0; i < 2; i++ {
+		_ = b.Consume(ctx, "jobs", func(_ context.Context, m models.Message) error { seen = append(seen, string(m.Payload)); return nil })
+	}
+	if len(seen) != 2 || seen[0] != "first" || seen[1] != "second" {
+		t.Fatalf("consumed %v, want original order", seen)
+	}
+
+	if n, err := b.Purge(ctx, "dlq"); err != nil || n != 1 || mr.Exists("dlq") {
+		t.Fatalf("purge = %d %v", n, err)
+	}
+	if moved, _ := b.Requeue(ctx, "dlq", "jobs", 5); moved != 0 {
+		t.Fatalf("requeue from an empty queue moved %d", moved)
+	}
+}
+
+func TestRequeueResetsAttemptCount(t *testing.T) {
+	b, _ := newBroker(t) // maxAttempts = 3
+	ctx := context.Background()
+	_ = b.Publish(ctx, "jobs", []byte("flaky"))
+	fail := func(context.Context, models.Message) error { return errors.New("boom") }
+	for i := 0; i < 3; i++ {
+		_ = b.Consume(ctx, "jobs", fail)
+	}
+	dead, _ := b.Peek(ctx, "dlq", 1)
+	if len(dead) != 1 || dead[0].Attempts != 3 {
+		t.Fatalf("dead letter = %+v, want attempts=3", dead)
+	}
+	_, _ = b.Requeue(ctx, "dlq", "jobs", 1)
+	back, _ := b.Peek(ctx, "jobs", 1)
+	if len(back) != 1 || back[0].Attempts != 0 || back[0].ID != dead[0].ID {
+		t.Fatalf("requeued = %+v", back)
+	}
+}

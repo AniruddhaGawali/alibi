@@ -207,3 +207,69 @@ func (b *RedisListBroker) sleep(ctx context.Context, d time.Duration) {
 	case <-ctx.Done():
 	}
 }
+
+// Entry is one stored message as seen by inspection tools.
+type Entry struct {
+	ID       string
+	Attempts int
+	Payload  []byte
+}
+
+// Len returns how many messages wait on topic.
+func (b *RedisListBroker) Len(ctx context.Context, topic string) (int64, error) {
+	return b.client.LLen(ctx, topic).Result()
+}
+
+// Peek returns up to n messages from topic, oldest first (the order they would
+// be consumed in), without removing them.
+func (b *RedisListBroker) Peek(ctx context.Context, topic string, n int) ([]Entry, error) {
+	if n < 1 {
+		return nil, nil
+	}
+	raws, err := b.client.LRange(ctx, topic, int64(-n), -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("queue: peek %q: %w", topic, err)
+	}
+	out := make([]Entry, 0, len(raws))
+	for i := len(raws) - 1; i >= 0; i-- { // LRANGE is newest-first at the tail; reverse to oldest-first
+		env := decode(raws[i])
+		out = append(out, Entry{ID: env.ID, Attempts: env.Attempts, Payload: env.Payload})
+	}
+	return out, nil
+}
+
+// Requeue moves up to n messages (oldest first) from one topic to another,
+// typically the DLQ back to its work queue, with their attempt count reset so
+// they get a full set of retries. It returns how many were moved. A message
+// that cannot be pushed is put back where it came from, never dropped.
+func (b *RedisListBroker) Requeue(ctx context.Context, from, to string, n int) (int, error) {
+	moved := 0
+	for ; moved < n; moved++ {
+		raw, err := b.client.RPop(ctx, from).Result()
+		if errors.Is(err, redis.Nil) {
+			return moved, nil
+		}
+		if err != nil {
+			return moved, fmt.Errorf("queue: requeue pop %q: %w", from, err)
+		}
+		env := decode(raw)
+		env.Attempts = 0
+		if err := b.push(ctx, to, env); err != nil {
+			// Restore the original bytes at the consuming end.
+			if rErr := b.client.RPush(context.WithoutCancel(ctx), from, raw).Err(); rErr != nil {
+				return moved, errors.Join(err, rErr)
+			}
+			return moved, err
+		}
+	}
+	return moved, nil
+}
+
+// Purge deletes every message on topic and returns how many there were.
+func (b *RedisListBroker) Purge(ctx context.Context, topic string) (int64, error) {
+	n, err := b.client.LLen(ctx, topic).Result()
+	if err != nil {
+		return 0, err
+	}
+	return n, b.client.Del(ctx, topic).Err()
+}
