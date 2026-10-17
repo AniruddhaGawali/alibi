@@ -9,11 +9,11 @@ Project skills are indexed in `.claude/skills/INDEX.md` (path, purpose and trigg
 - `alibi-ui` — frontend UI: shadcn components, golden-sunset theme (`.claude/skills/alibi-ui/SKILL.md`)
 - `alibi-forms` — forms with `components/form` and zod (`.claude/skills/alibi-forms/SKILL.md`)
 - `alibi-api` — frontend API calls via `createApi` hooks (`.claude/skills/alibi-api/SKILL.md`)
-- `alibi-backend-api` — Go backend: input validation, JSON responses, logging, errors/startup, queues, health, tests (`.claude/skills/alibi-backend-api/SKILL.md`)
+- `alibi-backend-api` — Go backend: input validation, JSON responses, logging, errors/startup, queues, health, tests, and the goose + sqlc database workflow (`.claude/skills/alibi-backend-api/SKILL.md`)
 
 When you add or change a skill, update `INDEX.md` and this list.
 
 ## Checks before finishing
 
-- Backend: `cd backend && go build ./... && go vet ./... && go test ./...`
+- Backend: `cd backend && go build ./... && go vet ./... && go test ./... && go mod tidy -diff`; if you touched `backend/sql/`, also `make sqlc` and `make sqlc-diff` (needs the `sqlc` and `goose` CLIs, see `backend/sql/README.md`)
 - Frontend: `cd frontend && npm run build && npm run lint` (the stock shadcn "only-export-components" warnings in `components/ui/` are expected)

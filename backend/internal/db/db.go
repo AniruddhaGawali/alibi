@@ -6,7 +6,11 @@ import (
 
 	"backend/internal/config"
 	"backend/pkg/utils"
+	sqlfiles "backend/sql"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
 	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
@@ -70,4 +74,33 @@ func ConnectRedis(cfg *config.Config) (*redis.Client, error) {
 	}
 	utils.LogInfo("[DB] Redis connected successfully", "pool_size", cfg.RedisPoolSize)
 	return client, nil
+}
+
+// Migrate applies the pending goose migrations embedded from sql/migrations.
+// The same files are used by the goose CLI (see the Makefile). A Postgres
+// advisory lock serialises concurrent runs, so several API replicas starting at
+// once (rolling deploy, --scale api=N) apply each migration exactly once; the
+// others wait and then find nothing pending.
+func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	migrations, err := sqlfiles.Migrations()
+	if err != nil {
+		return fmt.Errorf("postgres: migrations: %w", err)
+	}
+	sqlDB := stdlib.OpenDBFromPool(pool) // shares the pool; do not close it
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("postgres: migration lock: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, sqlDB, migrations, goose.WithSessionLocker(locker))
+	if err != nil {
+		return fmt.Errorf("postgres: migrations: %w", err)
+	}
+	results, err := provider.Up(ctx)
+	for _, r := range results {
+		utils.LogInfo("[DB] migration applied", "version", r.Source.Version, "file", r.Source.Path, "took", r.Duration)
+	}
+	if err != nil {
+		return fmt.Errorf("postgres: migrate: %w", err)
+	}
+	return nil
 }

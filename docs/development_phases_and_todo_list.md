@@ -25,10 +25,28 @@
 ## Phase 1: Onboarding and Authentication (P1)
 
 ### P1.1 Auth Backend (Go)
-- [ ] Implement Supabase Auth APIs for Email/Password (with OTP) and Google Login.
-- [ ] Create the user profile record in PostgreSQL upon successful signup.
-- [ ] Implement JWT generation, parsing, and validation middleware.
-- [ ] Initialize the Redis JWT Blacklist logic for secure logouts.
+- [x] Custom email/password signup with OTP verification (`signup` -> `verify-otp`, `resend-otp`); no Postgres row until the code is verified. Local PostgreSQL for now, Supabase later.
+- [ ] Google Login.
+- [x] Create the user profile record in PostgreSQL upon successful OTP verification (starting balance of 10 question tokens, 0 trophies).
+- [x] Implement JWT generation, parsing, and validation middleware (deny-by-default `auth.Middleware`, public-route allow-list).
+- [x] Initialize the Redis JWT Blacklist logic for secure logouts (`blacklist:jwt:<jti>`, access and refresh tokens, remaining-TTL expiry).
+- [x] Refresh-token rotation (each refresh token works once) and login.
+- [x] Dual-layer OTP rate limiting in Redis (429 + `Retry-After`): per email a 60 s cooldown and 5 codes/day; per client IP 10 codes per 15 min (so shared networks still work); wrong-code attempt cap; trusted-proxy aware client IP.
+- [x] Auth abuse hardening (PR #2 review): atomic wrong-OTP cap and HMAC-only code storage, per-IP budget before DB/bcrypt work, login lockout with exponential backoff + bcrypt concurrency bound, IPv6 /64 keys, loopback-only default `TRUSTED_PROXIES`, avatar decode/upload limits and conditional avatar GETs, migration advisory lock, BIGINT token balance, least-privilege compose env + healthchecks. See `backend/README.md`.
+- [ ] Bot protection (Cloudflare Turnstile / hCaptcha) on signup and resend-otp (needs a frontend widget and a secret key).
+- [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized/compressed, stored as `bytea`; `GET /api/user/avatars/{id}`).
+- [x] Token balance: Postgres is the source of truth, Redis `user:coins:<id>` is the cache (`wallet` service).
+- [x] Database workflow: goose migrations + sqlc type-safe queries (`backend/sql`).
+
+### P1.1b Email Delivery (Go, async)
+- [x] Brevo SMTP helper in `pkg/utils/email.go` (`net/smtp`, STARTTLS/implicit TLS, HTML + plain text, context timeout).
+- [x] API publishes OTP emails to `queue:email:outbound` instead of sending synchronously.
+- [x] Separate email worker process (`cmd/worker`, `make run-worker`) consumes the queue and sends via Brevo.
+- [x] Failures: temporary SMTP/network errors return `WorkerError` (retry with backoff); permanent rejections and bad payloads go straight to the DLQ `queue:email:dlq`; exhausted retries are dead-lettered.
+- [x] Run the worker next to the API as its own service: one Dockerfile with `api` and `worker` targets, compose services under `--profile app` (scalable: `--scale email-worker=3`), healthchecks, restart policy, graceful shutdown. See `backend/README.md`.
+- [x] Worker concurrency (`WORKER_CONCURRENCY`), `GET /health` on the worker, and dropping OTP emails whose code already expired.
+- [x] DLQ monitoring: queue depths logged on an interval (ERROR when the DLQ grows, with reminders), and `emailctl` (stats / list / requeue / purge) for inspection and recovery.
+- [ ] Create the actual alert on `dlq_depth > 0` in the log/ClickHouse tooling, and set the real Brevo credentials and verified sender in production.
 
 ### P1.2 Auth Frontend (React)
 - [ ] Build the Signup form (Email/Username/Password) and direct Google Login button.
@@ -39,7 +57,7 @@
 ### P1.3 Auth Integration
 - [ ] Connect frontend auth forms to the Go backend.
 - [ ] Handle routing post-login (redirect to Dashboard).
-- [ ] Implement logic to automatically allocate the initial 10 question tokens to the user's wallet upon completing onboarding.
+- [x] Implement logic to automatically allocate the initial 10 question tokens to the user's wallet upon completing onboarding. (Backend: allocated when the OTP is verified; frontend just displays it.)
 - [ ] Connect the frontend logout button to the backend Redis Blacklist endpoint.
 
 ---

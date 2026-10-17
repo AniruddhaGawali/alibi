@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -24,8 +26,31 @@ var validate = func() *validator.Validate {
 		}
 		return name
 	})
+	// "password" rule: 8-72 bytes (bcrypt ignores anything past 72), at least one letter and one digit.
+	_ = v.RegisterValidation("password", func(fl validator.FieldLevel) bool {
+		pw := fl.Field().String()
+		if len(pw) < 8 || len(pw) > 72 {
+			return false
+		}
+		var letter, digit bool
+		for _, c := range pw {
+			switch {
+			case unicode.IsLetter(c):
+				letter = true
+			case unicode.IsDigit(c):
+				digit = true
+			}
+		}
+		return letter && digit
+	})
+	// username: 3-20 chars of letters, digits and underscore.
+	_ = v.RegisterValidation("username", func(fl validator.FieldLevel) bool {
+		return usernameRe.MatchString(fl.Field().String())
+	})
 	return v
 }()
+
+var usernameRe = regexp.MustCompile(`^[A-Za-z0-9_]{3,20}$`)
 
 // Validate checks dst against its `validate:"..."` struct tags and returns a
 // field -> message map, or nil when valid.
@@ -57,6 +82,10 @@ func fieldMessage(fe validator.FieldError) string {
 		return fmt.Sprintf("must be at most %s", fe.Param())
 	case "oneof":
 		return fmt.Sprintf("must be one of: %s", fe.Param())
+	case "password":
+		return "must be 8-72 characters with at least one letter and one digit"
+	case "username":
+		return "must be 3-20 characters: letters, digits or underscore"
 	case "uuid":
 		return "must be a valid UUID"
 	default:
