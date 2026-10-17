@@ -2,8 +2,9 @@ package db
 
 import (
 	"context"
-	"time"
+	"fmt"
 
+	"backend/internal/config"
 	"backend/pkg/utils"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -11,56 +12,62 @@ import (
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-const pingTimeout = 5 * time.Second
-
-func ConnectPostgres(uri string) *pgxpool.Pool {
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+func ConnectPostgres(cfg *config.Config) (*pgxpool.Pool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, uri)
+	pcfg, err := pgxpool.ParseConfig(cfg.PostgresURI)
 	if err != nil {
-		utils.LogError("[DB] PostgreSQL connection failed", "err", err)
-		panic(err)
+		return nil, fmt.Errorf("postgres: invalid POSTGRES_URI: %w", err)
+	}
+	pcfg.MaxConns = cfg.PGMaxConns
+	pcfg.MinConns = min(cfg.PGMinConns, cfg.PGMaxConns)
+
+	pool, err := pgxpool.NewWithConfig(ctx, pcfg)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: connect: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		utils.LogError("[DB] PostgreSQL ping failed", "err", err)
-		panic(err)
+		pool.Close()
+		return nil, fmt.Errorf("postgres: ping: %w", err)
 	}
-	utils.LogInfo("[DB] PostgreSQL connected successfully")
-	return pool
+	utils.LogInfo("[DB] PostgreSQL connected successfully", "max_conns", pcfg.MaxConns)
+	return pool, nil
 }
 
-func ConnectMongo(uri string) *mongo.Client {
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+func ConnectMongo(cfg *config.Config) (*mongo.Client, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
 	defer cancel()
 
-	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	client, err := mongo.Connect(options.Client().
+		ApplyURI(cfg.MongoURI).
+		SetMaxPoolSize(cfg.MongoMaxPool).
+		SetServerSelectionTimeout(cfg.ConnectTimeout))
 	if err != nil {
-		utils.LogError("[DB] MongoDB connection failed", "err", err)
-		panic(err)
+		return nil, fmt.Errorf("mongodb: connect: %w", err)
 	}
 	if err := client.Ping(ctx, nil); err != nil {
-		utils.LogError("[DB] MongoDB ping failed", "err", err)
-		panic(err)
+		_ = client.Disconnect(context.Background())
+		return nil, fmt.Errorf("mongodb: ping: %w", err)
 	}
-	utils.LogInfo("[DB] MongoDB connected successfully")
-	return client
+	utils.LogInfo("[DB] MongoDB connected successfully", "max_pool", cfg.MongoMaxPool)
+	return client, nil
 }
 
-func ConnectRedis(uri string) *redis.Client {
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+func ConnectRedis(cfg *config.Config) (*redis.Client, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ConnectTimeout)
 	defer cancel()
 
-	opts, err := redis.ParseURL(uri)
+	opts, err := redis.ParseURL(cfg.RedisURI)
 	if err != nil {
-		utils.LogError("[DB] Redis URI invalid", "err", err)
-		panic(err)
+		return nil, fmt.Errorf("redis: invalid REDIS_URI: %w", err)
 	}
+	opts.PoolSize = cfg.RedisPoolSize
 	client := redis.NewClient(opts)
 	if err := client.Ping(ctx).Err(); err != nil {
-		utils.LogError("[DB] Redis ping failed", "err", err)
-		panic(err)
+		_ = client.Close()
+		return nil, fmt.Errorf("redis: ping: %w", err)
 	}
-	utils.LogInfo("[DB] Redis connected successfully")
-	return client
+	utils.LogInfo("[DB] Redis connected successfully", "pool_size", cfg.RedisPoolSize)
+	return client, nil
 }

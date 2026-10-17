@@ -7,9 +7,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// LoadEnv loads the first .env file that exists, logs which variables are set, and
-// panics if any required variable is missing.
-func LoadEnv(required []string, files ...string) {
+// LoadEnv loads the first .env file that exists, logs which required
+// variables are set, and returns an error if any of them is missing.
+func LoadEnv(required []string, files ...string) error {
 	loaded := false
 	for _, f := range files {
 		if err := godotenv.Load(f); err == nil {
@@ -24,8 +24,9 @@ func LoadEnv(required []string, files ...string) {
 
 	for _, key := range required {
 		if os.Getenv(key) == "" {
-			panic(fmt.Sprintf("missing required environment variable: %s", key))
+			return fmt.Errorf("missing required environment variable: %s", key)
 		}
 		LogInfo("[ENV] variable loaded", "key", key)
 	}
+	return nil
 }

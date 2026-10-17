@@ -31,6 +31,13 @@ Golden-sunset, dark-only, game-like (think Hogwarts Legacy menus). Change it by 
 
 If a new component needs the look, extend the `[data-slot='...']` selectors in `index.css`.
 
+## 2b. Structure, providers and dependencies
+
+- **Keep pages thin.** A page in `src/pages/` composes feature components; it does not hold hundreds of lines of JSX. Put feature components in `src/components/<feature>/` (e.g. `components/showcase/` holds the UI showcase sections that `HomePage` composes, and `components/layout/` the shared layout). Split a component once it mixes unrelated concerns or grows past roughly 150 lines.
+- **Providers live in `App.tsx`:** `ThemeProvider` (next-themes, forced `dark`, which shadcn's `Toaster` reads for its theme), `TooltipProvider`, the router and `Toaster`. `QueryClientProvider` is in `main.tsx`. A new shadcn component that needs a provider (the CLI prints a note) gets it added in `App.tsx`; without it the component can misbehave at runtime even though it compiles.
+- **Dependencies stay lean.** Before adding an npm package, check whether shadcn, Radix, Tailwind, zod, react-hook-form, React Router or an existing helper already does the job. Remove packages you stop using. `tailwindcss`, `tw-animate-css`, `shadcn` and the `@fontsource` packages look unused to scanners but are imported from `index.css`, so keep them.
+- **Auth token:** the JWT is currently a JS-readable cookie handled only in `src/utils/cookieHelpers.ts` and read only in `apiClient.ts`. Keep it that way (no `localStorage`, no token handling in components) so it can move to an HttpOnly cookie set by the backend without touching UI code.
+
 ## 3. Forms: zod + react-hook-form + `components/form`
 
 Never build form fields from raw inputs. Use the wrappers in `src/components/form/` (`FormInput`, `FormTextarea`, `FormSelect`, `FormCheckbox`, `FormSwitch`, `FormRadioGroup`). They take `control` and `name`, and render the label, description and shadcn `FieldError` automatically.
@@ -54,4 +61,4 @@ Write user-facing error messages in the zod schema. If you need a control that h
 
 ## 5. Before finishing
 
-Run `cd frontend && npm run build && npm run lint`. The build must pass. The only expected lint warnings are the stock shadcn "only-export-components" ones in `ui/`.
+Run `cd frontend && npm run build && npm run lint`. The `ui/` fast-refresh warnings are expected; anything else (unused imports, new warnings) should be fixed. The build must pass. The only expected lint warnings are the stock shadcn "only-export-components" ones in `ui/`.
