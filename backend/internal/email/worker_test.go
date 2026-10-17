@@ -188,3 +188,29 @@ func TestSnapshot(t *testing.T) {
 		t.Fatalf("%+v %v", d, err)
 	}
 }
+
+func TestRenderExpiryFollowsMessageLifetime(t *testing.T) {
+	now := time.Unix(1_000_000, 0)
+	for _, c := range []struct {
+		expires int64
+		want    string
+	}{
+		{now.Add(10 * time.Minute).Unix(), "expires in 10 minutes"},
+		{now.Add(3*time.Minute + time.Second).Unix(), "expires in 4 minutes"},
+		{now.Add(30 * time.Second).Unix(), "expires in 1 minute"},
+		{0, "expires soon"},
+	} {
+		_, text, html, err := render(Message{To: "a@b.co", OTP: "123456", Type: TypeSignup, ExpiresAt: c.expires}, now)
+		if err != nil || !strings.Contains(text, c.want) || !strings.Contains(html, c.want) {
+			t.Errorf("want %q in:\n%s\n%s (err %v)", c.want, text, html, err)
+		}
+	}
+}
+
+func TestExpired(t *testing.T) {
+	now := time.Unix(100, 0)
+	if !Expired([]byte(`{"expires_at":99}`), now) || Expired([]byte(`{"expires_at":101}`), now) ||
+		Expired([]byte(`{}`), now) || Expired([]byte(`junk`), now) {
+		t.Fatal("Expired misclassified a payload")
+	}
+}

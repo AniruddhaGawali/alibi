@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 const (
@@ -14,6 +15,9 @@ const (
 	Topic = "queue:email:outbound"
 	// DLQ receives messages that failed permanently or ran out of retries.
 	DLQ = "queue:email:dlq"
+
+	// DLQMaxLen caps the dead-letter list; the oldest entries are dropped first.
+	DLQMaxLen = 1000
 
 	TypeSignup = "signup"
 )
@@ -43,4 +47,10 @@ func Publish(ctx context.Context, p Publisher, m Message) error {
 		return fmt.Errorf("email: encode message: %w", err)
 	}
 	return p.Publish(ctx, Topic, payload)
+}
+
+// Expired reports whether payload is a Message whose code is already dead.
+func Expired(payload []byte, now time.Time) bool {
+	var m Message
+	return json.Unmarshal(payload, &m) == nil && m.ExpiresAt > 0 && now.Unix() > m.ExpiresAt
 }

@@ -102,7 +102,7 @@ func (w *Worker) Handle(ctx context.Context, msg models.Message) error {
 	if !otpRe.MatchString(m.OTP) {
 		return &models.DlqError{Reason: "otp must be 6 digits"}
 	}
-	subject, text, htmlBody, err := render(m)
+	subject, text, htmlBody, err := render(m, w.now())
 	if err != nil {
 		return &models.DlqError{Reason: "unknown message type"}
 	}

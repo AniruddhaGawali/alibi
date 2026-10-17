@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"net"
+	"testing"
+)
 
 func TestEnvIntFallsBackOnInvalid(t *testing.T) {
 	t.Setenv("X_NUM", "42")
@@ -47,5 +50,19 @@ func TestParseCIDRs(t *testing.T) {
 	}
 	if _, err := parseCIDRs("10.0.0.0/8,not-a-cidr"); err == nil {
 		t.Fatal("expected an error for an invalid CIDR")
+	}
+}
+
+func TestDefaultTrustedProxiesAreLoopbackOnly(t *testing.T) {
+	nets, err := parseCIDRs(defaultTrustedProxies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ip := range []string{"172.18.0.1", "10.1.2.3", "192.168.1.5"} {
+		for _, n := range nets {
+			if n.Contains(net.ParseIP(ip)) {
+				t.Errorf("%s must not be trusted by default (Docker gateway / private ranges)", ip)
+			}
+		}
 	}
 }

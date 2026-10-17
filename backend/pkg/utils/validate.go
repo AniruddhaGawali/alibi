@@ -26,7 +26,7 @@ var validate = func() *validator.Validate {
 		}
 		return name
 	})
-	// password: 8-72 bytes (bcrypt ignores anything past 72) with a letter and a digit.
+	// "password" rule: 8-72 bytes (bcrypt ignores anything past 72), at least one letter and one digit.
 	_ = v.RegisterValidation("password", func(fl validator.FieldLevel) bool {
 		pw := fl.Field().String()
 		if len(pw) < 8 || len(pw) > 72 {

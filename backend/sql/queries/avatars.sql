@@ -22,3 +22,7 @@ RETURNING avatar_updated_at::timestamptz AS updated_at;
 
 -- name: GetAvatar :one
 SELECT data, updated_at FROM user_avatars WHERE user_id = @id;
+
+-- name: GetAvatarUpdatedAt :one
+-- Cheap revalidation lookup: no image bytes are read.
+SELECT updated_at FROM user_avatars WHERE user_id = @id;

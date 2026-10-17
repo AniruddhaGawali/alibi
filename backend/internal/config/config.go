@@ -44,7 +44,11 @@ type Config struct {
 	OTPEmailDailyMax int           // codes per email per 24h
 	OTPIPMax         int           // codes per client IP per OTPIPWindow
 	OTPIPWindow      time.Duration
-	OTPMaxAttempts   int          // wrong codes allowed before the pending signup is discarded
+	OTPMaxAttempts   int // wrong codes allowed before the pending signup is discarded
+	AuthIPMax        int // requests per client IP per AuthIPWindow on signup / OTP / login / refresh
+	AuthIPWindow     time.Duration
+	LoginMaxFailures int          // wrong passwords per email before login locks (exponential backoff)
+	HashWorkers      int          // max concurrent bcrypt operations; 0 = number of CPUs
 	TrustedProxies   []*net.IPNet // peers whose X-Forwarded-For / X-Real-IP headers are believed
 
 	// Email delivery (Brevo SMTP), used by the email worker.
@@ -66,12 +70,16 @@ const minJWTSecretLen = 32
 var (
 	apiRequired    = []string{"POSTGRES_URI", "MONGO_URI", "REDIS_URI", "JWT_SECRET"}
 	workerRequired = []string{"REDIS_URI", "BREVO_SMTP_HOST", "BREVO_SMTP_USER", "BREVO_SMTP_PASS"}
+	redisRequired  = []string{"REDIS_URI"}
 )
 
-// defaultTrustedProxies are loopback and private ranges: a reverse proxy or
-// container network in front of the API. Set TRUSTED_PROXIES to narrow this
-// (or to "none" to never believe forwarding headers).
-const defaultTrustedProxies = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+// defaultTrustedProxies is loopback only. Private ranges are deliberately not
+// trusted by default: with Docker's published ports every external client
+// reaches the API from the bridge gateway (172.x), which would make any client's
+// X-Forwarded-For believable. In production set TRUSTED_PROXIES to the exact
+// addresses of your reverse proxy / load balancer ("none" = never believe
+// forwarding headers).
+const defaultTrustedProxies = "127.0.0.0/8,::1/128"
 
 // Load reads the .env file (repo root, or backend/ cwd) and returns the config
 // for the API server.
@@ -89,6 +97,9 @@ func Load() (*Config, error) {
 // LoadWorker returns the config for the email worker, which needs Redis and
 // Brevo but not Postgres, MongoDB or JWT.
 func LoadWorker() (*Config, error) { return load(workerRequired) }
+
+// LoadRedisOnly returns the config for tools that only talk to Redis (emailctl).
+func LoadRedisOnly() (*Config, error) { return load(redisRequired) }
 
 func load(required []string) (*Config, error) {
 	if err := utils.LoadEnv(required, ".env", "../.env"); err != nil {
@@ -125,6 +136,10 @@ func load(required []string) (*Config, error) {
 		OTPIPMax:         envInt("OTP_IP_MAX", 10, 1, 10000),
 		OTPIPWindow:      time.Duration(envInt("OTP_IP_WINDOW_MINUTES", 15, 1, 1440)) * time.Minute,
 		OTPMaxAttempts:   envInt("OTP_MAX_ATTEMPTS", 5, 1, 20),
+		AuthIPMax:        envInt("AUTH_IP_MAX", 60, 1, 100000),
+		AuthIPWindow:     time.Duration(envInt("AUTH_IP_WINDOW_MINUTES", 15, 1, 1440)) * time.Minute,
+		LoginMaxFailures: envInt("LOGIN_MAX_FAILURES", 5, 1, 100),
+		HashWorkers:      envInt("BCRYPT_WORKERS", 0, 0, 256),
 		TrustedProxies:   proxies,
 
 		BrevoSMTPHost: os.Getenv("BREVO_SMTP_HOST"),

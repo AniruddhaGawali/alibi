@@ -32,6 +32,7 @@
 - [x] Initialize the Redis JWT Blacklist logic for secure logouts (`blacklist:jwt:<jti>`, access and refresh tokens, remaining-TTL expiry).
 - [x] Refresh-token rotation (each refresh token works once) and login.
 - [x] Dual-layer OTP rate limiting in Redis (429 + `Retry-After`): per email a 60 s cooldown and 5 codes/day; per client IP 10 codes per 15 min (so shared networks still work); wrong-code attempt cap; trusted-proxy aware client IP.
+- [x] Auth abuse hardening (PR #2 review): atomic wrong-OTP cap and HMAC-only code storage, per-IP budget before DB/bcrypt work, login lockout with exponential backoff + bcrypt concurrency bound, IPv6 /64 keys, loopback-only default `TRUSTED_PROXIES`, avatar decode/upload limits and conditional avatar GETs, migration advisory lock, BIGINT token balance, least-privilege compose env + healthchecks. See `backend/README.md`.
 - [ ] Bot protection (Cloudflare Turnstile / hCaptcha) on signup and resend-otp (needs a frontend widget and a secret key).
 - [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized/compressed, stored as `bytea`; `GET /api/user/avatars/{id}`).
 - [x] Token balance: Postgres is the source of truth, Redis `user:coins:<id>` is the cache (`wallet` service).

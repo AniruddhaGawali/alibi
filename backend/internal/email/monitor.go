@@ -12,6 +12,26 @@ type Lengther interface {
 	Len(ctx context.Context, topic string) (int64, error)
 }
 
+// Pruner removes queued messages matching a predicate (*queue.RedisListBroker).
+type Pruner interface {
+	Prune(ctx context.Context, topic string, drop func(payload []byte) bool) (int, error)
+}
+
+// pruneExpired drops messages whose OTP has expired from both queues, so
+// recipient addresses and dead codes do not linger in Redis (a dead-lettered or
+// stuck message is useless after its expiry).
+func pruneExpired(ctx context.Context, p Pruner) {
+	drop := func(payload []byte) bool { return Expired(payload, time.Now()) }
+	for _, topic := range []string{Topic, DLQ} {
+		n, err := p.Prune(ctx, topic, drop)
+		if err != nil {
+			utils.LogError("email queue monitor: prune expired", "queue", topic, "err", err)
+		} else if n > 0 {
+			utils.LogInfo("email queue monitor: dropped expired messages", "queue", topic, "dropped", n)
+		}
+	}
+}
+
 // Depths are the current queue sizes.
 type Depths struct {
 	Pending    int64 `json:"pending"`     // waiting to be sent
@@ -38,13 +58,17 @@ const reminderEvery = 5 * time.Minute
 // carry stable fields (queue_pending, dlq_depth) and reach ClickHouse through
 // the normal log pipeline, so alerts can be built on them. A DLQ that grew is
 // logged at ERROR immediately, and a non-empty one is re-logged as a reminder
-// every few minutes; a backlog (pending piling up) is logged at WARN.
+// every few minutes; a backlog (pending piling up) is logged at WARN. When q can
+// prune (the real broker), expired messages are dropped from both queues first.
 func Monitor(ctx context.Context, q Lengther, interval time.Duration) {
 	var lastDLQ int64
 	var lastReport time.Time
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	for {
+		if p, ok := q.(Pruner); ok {
+			pruneExpired(ctx, p)
+		}
 		d, err := Snapshot(ctx, q)
 		switch {
 		case err != nil:

@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	avatarSize    = 256      // processed avatars are avatarSize x avatarSize
-	jpegQuality   = 80       // balance of size and fidelity for a small avatar
-	maxSourcePx   = 8000     // longest accepted side before decoding
-	maxSourceArea = 25 << 20 // pixels; guards against decompression bombs
+	avatarSize    = 256     // processed avatars are avatarSize x avatarSize
+	jpegQuality   = 80      // balance of size and fidelity for a small avatar
+	maxSourcePx   = 4096    // longest accepted side, checked on the header before decoding
+	maxSourceArea = 8 << 20 // pixels (~8 MP, ~32 MB decoded); guards against decompression bombs
 )
 
 var errBadImage = errors.New("user: unsupported or invalid image")

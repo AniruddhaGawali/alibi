@@ -39,7 +39,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return usage()
 	}
-	cfg, err := config.LoadWorker()
+	cfg, err := config.LoadRedisOnly()
 	if err != nil {
 		return err
 	}
@@ -48,7 +48,7 @@ func run(args []string) error {
 		return err
 	}
 	defer rdb.Close()
-	b := queue.NewRedisListBroker(rdb, email.DLQ)
+	b := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -81,14 +81,27 @@ func run(args []string) error {
 		fmt.Printf("%d shown\n", len(entries))
 	case "requeue":
 		n := 1000
-		if len(args) > 1 && args[1] != "all" {
+		all := len(args) > 1 && args[1] == "all"
+		if len(args) > 1 && !all {
 			if n, err = strconv.Atoi(args[1]); err != nil || n < 1 {
 				return usage()
 			}
 		}
-		moved, err := b.Requeue(ctx, email.DLQ, email.Topic, n)
+		moved := 0
+		for {
+			m, err := b.Requeue(ctx, email.DLQ, email.Topic, n)
+			moved += m
+			if err != nil {
+				fmt.Printf("requeued %d message(s)\n", moved)
+				return err
+			}
+			// "all" keeps going until the DLQ is empty; a number stops after one batch.
+			if !all || m == 0 {
+				break
+			}
+		}
 		fmt.Printf("requeued %d message(s)\n", moved)
-		return err
+		return nil
 	case "purge":
 		n, err := b.Purge(ctx, email.DLQ)
 		fmt.Printf("purged %d message(s)\n", n)

@@ -7,8 +7,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,6 +73,10 @@ func (f *fakeStore) GetAvatar(context.Context, string) ([]byte, time.Time, error
 	return nil, time.Time{}, user.ErrNotFound
 }
 
+func (f *fakeStore) AvatarUpdatedAt(context.Context, string) (time.Time, error) {
+	return time.Time{}, user.ErrNotFound
+}
+
 // fakeMail records published email jobs; fail makes Publish error.
 type fakeMail struct {
 	sent []email.Message
@@ -124,7 +130,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e.h = NewHandler(Deps{
 		Users: e.store, Tokens: e.tm, Blacklist: e.bl,
-		OTP:     NewOTPStore(rdb, 10*time.Minute, 3),
+		OTP:     NewOTPStore(rdb, 10*time.Minute, 3, []byte("test-hmac-key")),
 		Limiter: NewLimiter(rdb, Policy{Cooldown: time.Minute, EmailDailyMax: 3, IPMax: 4, IPWindow: 15 * time.Minute}),
 		Mail:    e.mail, Coins: e.coins,
 		TrustedProxies: []*net.IPNet{private},
@@ -147,6 +153,11 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+// testPassword is generated per run (it satisfies the password rule: letters +
+// digits); bodies write {{PW}} where it belongs, so no credential-like literal
+// is committed.
+var testPassword = "Pw" + strconv.FormatInt(time.Now().UnixNano(), 36)
+
 type tokens struct {
 	JWT     string `json:"jwt_token"`
 	Refresh string `json:"refresh_token"`
@@ -154,6 +165,7 @@ type tokens struct {
 
 // do sends a request from the given client IP (default 203.0.113.1).
 func (e *env) do(method, path, body, bearer string, ip ...string) *httptest.ResponseRecorder {
+	body = strings.ReplaceAll(body, "{{PW}}", testPassword)
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	if body == "" {
 		req.Body = http.NoBody
@@ -181,19 +193,23 @@ func decodeTokens(t *testing.T, rec *httptest.ResponseRecorder) tokens {
 	return env.Data
 }
 
-// pendingOTP reads the code the API stored (and mailed) for addr.
+// pendingOTP returns the code most recently mailed to addr (the only place the
+// plaintext exists), after checking a session is pending for it.
 func (e *env) pendingOTP(t *testing.T, addr string) string {
 	t.Helper()
-	raw, err := e.mr.Get(sessionKey(addr))
-	if err != nil {
+	if _, err := e.mr.Get(sessionKey(addr)); err != nil {
 		t.Fatalf("no pending session for %s: %v", addr, err)
 	}
-	var s Session
-	_ = json.Unmarshal([]byte(raw), &s)
-	return s.OTP
+	for i := len(e.mail.sent) - 1; i >= 0; i-- {
+		if e.mail.sent[i].To == addr {
+			return e.mail.sent[i].OTP
+		}
+	}
+	t.Fatalf("no email queued for %s", addr)
+	return ""
 }
 
-const signupBody = `{"username":"sherlock","email":"Sherlock@Example.com","password":"Baker2218b"}`
+const signupBody = `{"username":"sherlock","email":"Sherlock@Example.com","password":"{{PW}}"}`
 
 // signup runs the full flow (signup -> OTP -> verify) from a fresh IP.
 func signup(t *testing.T, e *env) tokens {
@@ -203,7 +219,7 @@ func signup(t *testing.T, e *env) tokens {
 
 func signupAs(t *testing.T, e *env, username, addr, ip string) tokens {
 	t.Helper()
-	body := `{"username":"` + username + `","email":"` + addr + `","password":"Baker2218b"}`
+	body := `{"username":"` + username + `","email":"` + addr + `","password":"{{PW}}"}`
 	if rec := e.do("POST", "/api/auth/signup", body, "", ip); rec.Code != 200 {
 		t.Fatalf("signup: %d %s", rec.Code, rec.Body)
 	}
@@ -237,7 +253,7 @@ func TestSignupCreatesNoUserAndQueuesTheOTPEmail(t *testing.T) {
 	raw, _ := e.mr.Get(sessionKey("sherlock@example.com"))
 	var s Session
 	_ = json.Unmarshal([]byte(raw), &s)
-	if s.Username != "sherlock" || !strings.HasPrefix(s.HashedPassword, "$2") || strings.Contains(raw, "Baker2218b") {
+	if s.Username != "sherlock" || !strings.HasPrefix(s.HashedPassword, "$2") || strings.Contains(raw, testPassword) {
 		t.Fatalf("session = %s", raw)
 	}
 	if ttl := e.mr.TTL("ratelimit:otp:email:sherlock@example.com"); ttl <= 55*time.Second || ttl > time.Minute {
@@ -257,11 +273,11 @@ func TestSignupCreatesNoUserAndQueuesTheOTPEmail(t *testing.T) {
 func TestSignupValidationAndDuplicates(t *testing.T) {
 	e := newEnv(t)
 	for _, body := range []string{
-		`{"username":"ab","email":"a@b.co","password":"Baker2218b"}`,
-		`{"username":"sherlock","email":"nope","password":"Baker2218b"}`,
+		`{"username":"ab","email":"a@b.co","password":"{{PW}}"}`,
+		`{"username":"sherlock","email":"nope","password":"{{PW}}"}`,
 		`{"username":"sherlock","email":"a@b.co","password":"short1"}`,
 		`{"username":"sherlock","email":"a@b.co","password":"onlyletters"}`,
-		`{"username":"sherlock","email":"a@b.co","password":"Baker2218b","admin":true}`,
+		`{"username":"sherlock","email":"a@b.co","password":"{{PW}}","admin":true}`,
 	} {
 		if rec := e.do("POST", "/api/auth/signup", body, ""); rec.Code != 422 && rec.Code != 400 {
 			t.Errorf("%s: got %d", body, rec.Code)
@@ -272,18 +288,18 @@ func TestSignupValidationAndDuplicates(t *testing.T) {
 	}
 
 	signup(t, e)
-	rec := e.do("POST", "/api/auth/signup", `{"username":"other","email":"SHERLOCK@example.com","password":"Baker2218b"}`, "", "198.51.100.1")
+	rec := e.do("POST", "/api/auth/signup", `{"username":"other","email":"SHERLOCK@example.com","password":"{{PW}}"}`, "", "198.51.100.1")
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "email") {
 		t.Fatalf("duplicate email: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.do("POST", "/api/auth/signup", `{"username":"Sherlock","email":"new@example.com","password":"Baker2218b"}`, "", "198.51.100.2")
+	rec = e.do("POST", "/api/auth/signup", `{"username":"Sherlock","email":"new@example.com","password":"{{PW}}"}`, "", "198.51.100.2")
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "username") {
 		t.Fatalf("duplicate username: %d %s", rec.Code, rec.Body)
 	}
 }
 
 func signupBodyFor(name, addr string) string {
-	return `{"username":"` + name + `","email":"` + addr + `","password":"Baker2218b"}`
+	return `{"username":"` + name + `","email":"` + addr + `","password":"` + testPassword + `"}`
 }
 
 func TestEmailCooldownBlocksSameEmailFromAnyIP(t *testing.T) {
@@ -496,9 +512,12 @@ func TestResendOTP(t *testing.T) {
 		return e.do("POST", "/api/auth/resend-otp", `{"email":"`+addr+`"}`, "", ip)
 	}
 
-	// No pending signup.
-	if rec := resend("sherlock@example.com", "198.51.100.1"); rec.Code != 400 {
+	// No pending signup: indistinguishable from a real resend, but nothing is sent.
+	if rec := resend("nobody@example.com", "198.51.100.1"); rec.Code != 200 {
 		t.Fatalf("no session: %d", rec.Code)
+	}
+	if len(e.mail.sent) != 0 {
+		t.Fatalf("unknown signup must not send mail: %+v", e.mail.sent)
 	}
 
 	e.do("POST", "/api/auth/signup", signupBody, "", "198.51.100.5")
@@ -539,12 +558,12 @@ func TestResendOTP(t *testing.T) {
 func TestLogin(t *testing.T) {
 	e := newEnv(t)
 	signup(t, e)
-	if rec := e.do("POST", "/api/auth/login", `{"email":"sherlock@example.com","password":"Baker2218b"}`, ""); rec.Code != 200 || decodeTokens(t, rec).JWT == "" {
+	if rec := e.do("POST", "/api/auth/login", `{"email":"sherlock@example.com","password":"{{PW}}"}`, ""); rec.Code != 200 || decodeTokens(t, rec).JWT == "" {
 		t.Fatalf("login: %d %s", rec.Code, rec.Body)
 	}
 	for _, body := range []string{
-		`{"email":"sherlock@example.com","password":"wrong-password1"}`,
-		`{"email":"nobody@example.com","password":"Baker2218b"}`,
+		`{"email":"sherlock@example.com","password":"{{PW}}x"}`,
+		`{"email":"nobody@example.com","password":"{{PW}}"}`,
 	} {
 		if rec := e.do("POST", "/api/auth/login", body, ""); rec.Code != http.StatusUnauthorized {
 			t.Errorf("%s: got %d", body, rec.Code)
@@ -706,8 +725,10 @@ func TestSignupToWorkerEndToEnd(t *testing.T) {
 
 	select {
 	case body := <-sender.got:
-		if want := e.pendingOTP(t, "sherlock@example.com"); !strings.Contains(body, want) {
-			t.Fatalf("email does not contain the stored code %s:\n%s", want, body)
+		code := regexp.MustCompile(`\b[0-9]{6}\b`).FindString(body)
+		raw, _ := e.mr.Get(sessionKey("sherlock@example.com"))
+		if code == "" || !strings.Contains(raw, e.h.OTP.Hash("sherlock@example.com", code)) {
+			t.Fatalf("emailed code %q does not match the stored hash:\n%s", code, body)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("worker never sent the email")
@@ -719,4 +740,98 @@ type captureSender struct{ got chan string }
 func (c *captureSender) Send(_ context.Context, to, _, text, _ string) error {
 	c.got <- to + "\n" + text
 	return nil
+}
+
+func TestParallelWrongCodesGetOnlyMaxAttempts(t *testing.T) {
+	e := newEnv(t) // 3 attempts
+	e.do("POST", "/api/auth/signup", signupBody, "", "198.51.100.40")
+	good := e.pendingOTP(t, "sherlock@example.com")
+	wrong := "000000"
+	if good == wrong {
+		wrong = "111111"
+	}
+	e.h.Limiter.p.AuthIPMax = 1000 // isolate the attempt cap from the IP budget
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	counted := map[int]int{}
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			rec := e.do("POST", "/api/auth/verify-otp", `{"email":"sherlock@example.com","otp":"`+wrong+`"}`, "", "198.51.100.41")
+			mu.Lock()
+			counted[rec.Code]++
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if counted[400] != 40 {
+		t.Fatalf("responses = %v", counted)
+	}
+	// The session is gone after the cap, so even the right code is refused.
+	if rec := e.do("POST", "/api/auth/verify-otp", `{"email":"sherlock@example.com","otp":"`+good+`"}`, "", "198.51.100.41"); rec.Code != 400 {
+		t.Fatalf("right code after lockout: %d", rec.Code)
+	}
+	if len(e.store.byID) != 0 {
+		t.Fatal("no user may be created")
+	}
+}
+
+func TestVerifyIsThrottledPerIP(t *testing.T) {
+	e := newEnv(t)
+	e.h.Limiter.p.AuthIPMax = 3
+	var last int
+	for i := 0; i < 5; i++ {
+		last = e.do("POST", "/api/auth/verify-otp", `{"email":"a@example.com","otp":"123456"}`, "", "198.51.100.60").Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Fatalf("got %d, want 429", last)
+	}
+}
+
+func TestSignupAvailabilityCheckIsThrottledPerIP(t *testing.T) {
+	e := newEnv(t)
+	e.h.Limiter.p.AuthIPMax = 2
+	codes := []int{}
+	for _, n := range []string{"a1", "a2", "a3"} {
+		codes = append(codes, e.do("POST", "/api/auth/signup", `{"username":"`+n+`user","email":"`+n+`@example.com","password":"{{PW}}"}`, "", "198.51.100.70").Code)
+	}
+	if codes[2] != http.StatusTooManyRequests {
+		t.Fatalf("codes = %v", codes)
+	}
+}
+
+func TestLoginLocksOutAfterRepeatedFailures(t *testing.T) {
+	e := newEnv(t)
+	signup(t, e)
+	e.h.Limiter.p.AuthIPMax = 1000
+	bad := `{"email":"sherlock@example.com","password":"{{PW}}x"}`
+	for i := 0; i < e.h.Limiter.p.LoginMaxFailures; i++ {
+		if rec := e.do("POST", "/api/auth/login", bad, "", "198.51.100.80"); rec.Code != 401 {
+			t.Fatalf("attempt %d: %d", i, rec.Code)
+		}
+	}
+	// Locked now, even for the right password and from another IP (per-email lock).
+	rec := e.do("POST", "/api/auth/login", `{"email":"sherlock@example.com","password":"{{PW}}"}`, "", "198.51.100.81")
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("got %d retry-after=%q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	// Exponential: one more failure is impossible while locked, so fast-forward the lock.
+	e.mr.FastForward(2 * time.Minute)
+	if rec := e.do("POST", "/api/auth/login", `{"email":"sherlock@example.com","password":"{{PW}}"}`, "", "198.51.100.81"); rec.Code != 200 {
+		t.Fatalf("after lock expired: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestSessionStoresOnlyAnHMACOfTheCode(t *testing.T) {
+	e := newEnv(t)
+	e.do("POST", "/api/auth/signup", signupBody, "", "198.51.100.90")
+	otp := e.pendingOTP(t, "sherlock@example.com")
+	raw, _ := e.mr.Get(sessionKey("sherlock@example.com"))
+	if strings.Contains(raw, otp) && len(otp) == 6 && strings.Contains(raw, `"otp":`) {
+		t.Fatalf("plaintext code in redis: %s", raw)
+	}
+	if !strings.Contains(raw, e.h.OTP.Hash("sherlock@example.com", otp)) {
+		t.Fatalf("hash missing: %s", raw)
+	}
 }

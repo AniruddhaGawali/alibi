@@ -1,7 +1,6 @@
 package user
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +21,8 @@ const (
 	multipartMemory  = 2 << 20
 	defaultAvatarMax = 4 // default avatars are numbered 1..defaultAvatarMax
 	avatarURLPrefix  = "/api/user/avatars/"
+
+	maxConcurrentAvatars = 3 // image decodes at once; more get a 503 instead of exhausting memory
 )
 
 // Balancer reports a user's token balance (implemented by wallet.Service).
@@ -33,10 +34,22 @@ type Handler struct {
 	store    Store
 	balances Balancer
 	userID   func(context.Context) string // authenticated user from the request context (auth.UserID)
+	uploads  UploadLimiter                // nil = unlimited
+	decoding chan struct{}                // bounds concurrent image decodes
 }
 
-func NewHandler(store Store, balances Balancer, userID func(context.Context) string) *Handler {
-	return &Handler{store: store, balances: balances, userID: userID}
+// Option customises a Handler.
+type Option func(*Handler)
+
+// WithUploadLimiter throttles custom avatar uploads per user.
+func WithUploadLimiter(l UploadLimiter) Option { return func(h *Handler) { h.uploads = l } }
+
+func NewHandler(store Store, balances Balancer, userID func(context.Context) string, opts ...Option) *Handler {
+	h := &Handler{store: store, balances: balances, userID: userID, decoding: make(chan struct{}, maxConcurrentAvatars)}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
 }
 
 type avatarInfo struct {
@@ -193,7 +206,32 @@ func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string,
 		return
 	}
 
+	if h.uploads != nil {
+		wait, err := h.uploads.Allow(r.Context(), uid)
+		if err != nil {
+			utils.LogErrorCtx(r.Context(), "avatar upload rate limit check failed", "user_id", uid, "err", err)
+			utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+			return
+		}
+		if wait > 0 {
+			secs := int(wait.Seconds())
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			utils.LogInfoCtx(r.Context(), "avatar upload rate limited", "user_id", uid, "retry_after_sec", secs)
+			utils.ErrorResponse(w, http.StatusTooManyRequests, "too many avatar uploads, try again later",
+				map[string]int{"retry_after_seconds": secs})
+			return
+		}
+	}
+	// Decoding is the memory-hungry step: fail fast when other decodes are running.
+	select {
+	case h.decoding <- struct{}{}:
+	default:
+		w.Header().Set("Retry-After", "2")
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "server busy, try again shortly", nil)
+		return
+	}
 	jpg, err := processAvatar(data)
+	<-h.decoding
 	if errors.Is(err, errBadImage) {
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
 			map[string]string{"file": "must be a valid JPEG, PNG or GIF image"})
@@ -237,6 +275,24 @@ func (h *Handler) Avatar(w http.ResponseWriter, r *http.Request) {
 		utils.ErrorResponse(w, http.StatusBadRequest, "invalid user id", errs)
 		return
 	}
+	// Look at updated_at first (no image bytes) so a conditional request can be
+	// answered with 304 without reading the BYTEA.
+	updated, err := h.store.AvatarUpdatedAt(r.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		utils.ErrorResponse(w, http.StatusNotFound, "avatar not found", nil)
+		return
+	}
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "load avatar failed", "user_id", id, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load avatar", nil)
+		return
+	}
+	etag := fmt.Sprintf(`"%x"`, updated.UnixNano())
+	h.avatarHeaders(w, r, etag, updated)
+	if notModified(r, etag, updated) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	data, updated, err := h.store.GetAvatar(r.Context(), id)
 	if errors.Is(err, ErrNotFound) {
 		utils.ErrorResponse(w, http.StatusNotFound, "avatar not found", nil)
@@ -247,9 +303,42 @@ func (h *Handler) Avatar(w http.ResponseWriter, r *http.Request) {
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load avatar", nil)
 		return
 	}
+	etag = fmt.Sprintf(`"%x"`, updated.UnixNano()) // the image may have changed since the lookup
+	h.avatarHeaders(w, r, etag, updated)
 	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
+// avatarHeaders sets the validators and cache policy. Only a URL carrying the
+// current version (?v=<updated unix>, which avatarURL produces) is cached as
+// immutable; the bare URL is revalidated after five minutes, so a replaced or
+// removed avatar does not linger for a day.
+func (h *Handler) avatarHeaders(w http.ResponseWriter, r *http.Request, etag string, updated time.Time) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	// ServeContent adds Last-Modified and answers If-Modified-Since with 304.
-	http.ServeContent(w, r, "", updated, bytes.NewReader(data))
+	w.Header().Set("ETag", etag)
+	w.Header().Set("Last-Modified", updated.UTC().Format(http.TimeFormat))
+	if r.URL.Query().Get("v") == strconv.FormatInt(updated.Unix(), 10) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
+}
+
+// notModified implements the If-None-Match / If-Modified-Since check.
+func notModified(r *http.Request, etag string, updated time.Time) bool {
+	if inm := r.Header.Get("If-None-Match"); inm != "" {
+		for _, c := range strings.Split(inm, ",") {
+			if c = strings.TrimSpace(c); c == etag || c == "*" || c == "W/"+etag {
+				return true
+			}
+		}
+		return false
+	}
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
+		if t, err := http.ParseTime(ims); err == nil && !updated.Truncate(time.Second).After(t) {
+			return true
+		}
+	}
+	return false
 }

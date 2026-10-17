@@ -2,7 +2,10 @@ package auth
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,9 +20,10 @@ import (
 var ErrNoSession = errors.New("auth: no pending signup")
 
 // Session is the pending registration kept in Redis until the OTP is verified.
-// No PostgreSQL row exists for the user before that.
+// No PostgreSQL row exists for the user before that. Only an HMAC of the code is
+// stored: the plaintext lives just in the queued email.
 type Session struct {
-	OTP            string `json:"otp"`
+	OTPHash        string `json:"otp_hash"`
 	Username       string `json:"username"`
 	HashedPassword string `json:"hashed_password"`
 }
@@ -32,13 +36,25 @@ type OTPStore struct {
 	rdb         *redis.Client
 	ttl         time.Duration
 	maxAttempts int
+	key         []byte // HMAC key for stored code hashes
 }
 
-func NewOTPStore(rdb *redis.Client, ttl time.Duration, maxAttempts int) *OTPStore {
-	return &OTPStore{rdb: rdb, ttl: ttl, maxAttempts: maxAttempts}
+// NewOTPStore creates the store. hmacKey keys the code hashes kept in Redis; use
+// a server secret (it is domain-separated internally).
+func NewOTPStore(rdb *redis.Client, ttl time.Duration, maxAttempts int, hmacKey []byte) *OTPStore {
+	return &OTPStore{rdb: rdb, ttl: ttl, maxAttempts: maxAttempts, key: append([]byte("alibi:otp:v1:"), hmacKey...)}
 }
 
 func (s *OTPStore) TTL() time.Duration { return s.ttl }
+
+// Hash returns the value stored in a Session for code otp sent to email.
+func (s *OTPStore) Hash(email, otp string) string {
+	m := hmac.New(sha256.New, s.key)
+	m.Write([]byte(email))
+	m.Write([]byte{0})
+	m.Write([]byte(otp))
+	return hex.EncodeToString(m.Sum(nil))
+}
 
 // GenerateOTP returns a uniformly random 6-digit code ("000000"-"999999").
 func GenerateOTP() (string, error) {
@@ -84,18 +100,68 @@ func (s *OTPStore) Delete(ctx context.Context, email string) error {
 	return s.rdb.Del(ctx, sessionKey(email), attemptsKey(email)).Err()
 }
 
-// Fail records a wrong code. Once maxAttempts is reached the session is
-// discarded, so a 6-digit code cannot be brute-forced within its lifetime. It
-// reports whether the session was discarded.
-func (s *OTPStore) Fail(ctx context.Context, email string) (discarded bool, err error) {
-	pipe := s.rdb.TxPipeline()
-	incr := pipe.Incr(ctx, attemptsKey(email))
-	pipe.Expire(ctx, attemptsKey(email), s.ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, err
+// VerifyResult is the outcome of OTPStore.Verify.
+type VerifyResult int
+
+const (
+	VerifyNoSession VerifyResult = iota // never started, expired, or already discarded
+	VerifyOK                            // the code matched
+	VerifyWrong                         // wrong code; attempts remain
+	VerifyLocked                        // attempts exhausted; the session was discarded
+)
+
+// verifyScript charges an attempt BEFORE comparing, atomically, so parallel
+// requests cannot each get a free guess: attempt n is allowed only if n <= max.
+// The wrong-code counter is cleared on success only.
+//
+//	KEYS: 1 session, 2 attempts
+//	ARGV: 1 max attempts, 2 ttl s, 3 expected code hash
+//	returns {0} no session | {1, session json} ok | {2} wrong | {3} locked
+var verifyScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return {0} end
+local n = redis.call('INCR', KEYS[2])
+if n == 1 then redis.call('EXPIRE', KEYS[2], ARGV[2]) end
+local max = tonumber(ARGV[1])
+if n > max then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return {3}
+end
+local sess = cjson.decode(raw)
+if sess.otp_hash == ARGV[3] then
+  redis.call('DEL', KEYS[2])
+  return {1, raw}
+end
+if n >= max then
+  redis.call('DEL', KEYS[1], KEYS[2])
+  return {3}
+end
+return {2}
+`)
+
+// Verify checks code against the pending session for email. On VerifyOK it
+// returns the session; the caller creates the user and then Deletes it.
+func (s *OTPStore) Verify(ctx context.Context, email, code string) (VerifyResult, *Session, error) {
+	res, err := verifyScript.Run(ctx, s.rdb, []string{sessionKey(email), attemptsKey(email)},
+		s.maxAttempts, int(s.ttl.Seconds()), s.Hash(email, code)).Slice()
+	if err != nil {
+		return VerifyNoSession, nil, fmt.Errorf("auth: verify otp: %w", err)
 	}
-	if int(incr.Val()) >= s.maxAttempts {
-		return true, s.Delete(ctx, email)
+	if len(res) == 0 {
+		return VerifyNoSession, nil, nil
 	}
-	return false, nil
+	switch status, _ := res[0].(int64); status {
+	case 1:
+		raw, _ := res[1].(string)
+		var sess Session
+		if err := json.Unmarshal([]byte(raw), &sess); err != nil {
+			return VerifyNoSession, nil, fmt.Errorf("auth: corrupt signup session: %w", err)
+		}
+		return VerifyOK, &sess, nil
+	case 2:
+		return VerifyWrong, nil, nil
+	case 3:
+		return VerifyLocked, nil, nil
+	}
+	return VerifyNoSession, nil, nil
 }

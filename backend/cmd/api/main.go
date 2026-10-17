@@ -26,6 +26,8 @@ import (
 const (
 	shutdownTimeout = 10 * time.Second
 	initialTokens   = 10 // question tokens every new account starts with
+
+	avatarUploadsPerHour = 5 // custom avatar uploads allowed per user per hour
 )
 
 func main() {
@@ -112,17 +114,21 @@ func run() error {
 		Users:     userStore,
 		Tokens:    tokens,
 		Blacklist: blacklist,
-		OTP:       auth.NewOTPStore(rdb, cfg.OTPTTL, cfg.OTPMaxAttempts),
+		OTP:       auth.NewOTPStore(rdb, cfg.OTPTTL, cfg.OTPMaxAttempts, []byte(cfg.JWTSecret)),
 		Limiter: auth.NewLimiter(rdb, auth.Policy{
 			Cooldown: cfg.OTPCooldown, EmailDailyMax: cfg.OTPEmailDailyMax,
 			IPMax: cfg.OTPIPMax, IPWindow: cfg.OTPIPWindow,
+			AuthIPMax: cfg.AuthIPMax, AuthIPWindow: cfg.AuthIPWindow,
+			LoginMaxFailures: cfg.LoginMaxFailures,
 		}),
-		Mail:           queue.NewRedisListBroker(rdb, email.DLQ), // the email worker consumes it
+		Mail:           queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen)), // the email worker consumes it
 		Coins:          walletSvc,
 		TrustedProxies: cfg.TrustedProxies,
 		InitialTokens:  initialTokens,
+		HashWorkers:    cfg.HashWorkers,
 	})
-	userH := user.NewHandler(userStore, walletSvc, auth.UserID)
+	userH := user.NewHandler(userStore, walletSvc, auth.UserID,
+		user.WithUploadLimiter(user.NewRedisUploadLimiter(rdb, avatarUploadsPerHour, time.Hour)))
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
 	mux.HandleFunc("POST /api/auth/resend-otp", authH.ResendOTP)

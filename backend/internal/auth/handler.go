@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
-	"crypto/subtle"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net"
 	"net/http"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -32,11 +34,49 @@ type Deps struct {
 	Coins          CoinCache
 	TrustedProxies []*net.IPNet
 	InitialTokens  int // question tokens a new account starts with
+	HashWorkers    int // max concurrent bcrypt operations; 0 = number of CPUs
 }
 
-type Handler struct{ Deps }
+type Handler struct {
+	Deps
+	hashSem chan struct{} // bounds concurrent bcrypt work so a flood queues instead of starving the API
+}
 
-func NewHandler(d Deps) *Handler { return &Handler{Deps: d} }
+// hashWait is how long a request waits for a free bcrypt slot before a 503.
+const hashWait = 5 * time.Second
+
+func NewHandler(d Deps) *Handler {
+	n := d.HashWorkers
+	if n < 1 {
+		n = runtime.NumCPU()
+	}
+	return &Handler{Deps: d, hashSem: make(chan struct{}, n)}
+}
+
+// acquireHash reserves a bcrypt slot; call the returned func when done. When the
+// API is saturated it writes a 503 and returns ok=false.
+func (h *Handler) acquireHash(w http.ResponseWriter, r *http.Request) (release func(), ok bool) {
+	t := time.NewTimer(hashWait)
+	defer t.Stop()
+	select {
+	case h.hashSem <- struct{}{}:
+		return func() { <-h.hashSem }, true
+	case <-r.Context().Done():
+		return nil, false
+	case <-t.C:
+		utils.LogWarnCtx(r.Context(), "bcrypt saturated; rejecting request")
+		w.Header().Set("Retry-After", "5")
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "server busy, try again shortly", nil)
+		return nil, false
+	}
+}
+
+// emailID is a short stable digest of an email for logs and rate-limit keys, so
+// the address itself is not written to them.
+func emailID(addr string) string {
+	sum := sha256.Sum256([]byte(addr))
+	return hex.EncodeToString(sum[:8])
+}
 
 type signupReq struct {
 	Username string `json:"username" validate:"required,username"`
@@ -120,6 +160,31 @@ func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, status i
 	utils.SuccessResponse(w, status, resp)
 }
 
+// tooMany writes a 429 with Retry-After.
+func tooMany(w http.ResponseWriter, wait time.Duration) {
+	secs := int(wait.Seconds())
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	utils.ErrorResponse(w, http.StatusTooManyRequests, "too many requests, try again later",
+		map[string]int{"retry_after_seconds": secs})
+}
+
+// gateIP charges the shared per-IP auth budget before any database or bcrypt
+// work. When it refuses it has already written the 429 and returns false.
+func (h *Handler) gateIP(w http.ResponseWriter, r *http.Request, scope, ip string) bool {
+	wait, err := h.Limiter.HitIP(r.Context(), scope, ip)
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "ip rate limit check failed", "scope", scope, "err", err)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+		return false
+	}
+	if wait > 0 {
+		utils.LogInfoCtx(r.Context(), "ip rate limited", "scope", scope, "ip", ip, "retry_after_sec", int(wait.Seconds()))
+		tooMany(w, wait)
+		return false
+	}
+	return true
+}
+
 // takeCooldown applies the dual email + IP cooldown. When it refuses it has
 // already written the 429 (with Retry-After) and returns false.
 func (h *Handler) takeCooldown(w http.ResponseWriter, r *http.Request, email, ip string) bool {
@@ -130,11 +195,8 @@ func (h *Handler) takeCooldown(w http.ResponseWriter, r *http.Request, email, ip
 		return false
 	}
 	if wait > 0 {
-		secs := int(wait.Seconds())
-		utils.LogInfoCtx(r.Context(), "otp request rate limited", "ip", ip, "retry_after_sec", secs)
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		utils.ErrorResponse(w, http.StatusTooManyRequests, "too many requests, try again later",
-			map[string]int{"retry_after_seconds": secs})
+		utils.LogInfoCtx(r.Context(), "otp request rate limited", "ip", ip, "retry_after_sec", int(wait.Seconds()))
+		tooMany(w, wait)
 		return false
 	}
 	return true
@@ -168,6 +230,15 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	addr := normalizeEmail(req.Email)
 
+	// Charge the per-IP budget first: the availability check below hits Postgres
+	// and reveals whether an email / username exists.
+	ip := utils.ClientIP(r, h.TrustedProxies)
+	if !h.gateIP(w, r, "signup", ip) {
+		return
+	}
+	// Telling the user that an email or username is taken is a deliberate
+	// product trade-off (they must be able to pick another); the IP budget above
+	// is what limits enumeration.
 	emailTaken, nameTaken, err := h.Users.Availability(ctx, addr, req.Username)
 	if err != nil {
 		utils.LogErrorCtx(ctx, "check availability failed", "err", err)
@@ -186,7 +257,6 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := utils.ClientIP(r, h.TrustedProxies)
 	if !h.takeCooldown(w, r, addr, ip) {
 		return
 	}
@@ -196,7 +266,13 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 		utils.ErrorResponse(w, status, msg, nil)
 	}
 
+	releaseHash, ok := h.acquireHash(w, r)
+	if !ok {
+		h.Limiter.Release(context.WithoutCancel(ctx), addr, ip)
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	releaseHash()
 	if err != nil {
 		utils.LogErrorCtx(ctx, "hash password failed", "err", err)
 		fail(http.StatusInternalServerError, "could not start signup")
@@ -208,7 +284,7 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusInternalServerError, "could not start signup")
 		return
 	}
-	if err := h.OTP.Save(ctx, addr, Session{OTP: otp, Username: req.Username, HashedPassword: string(hash)}); err != nil {
+	if err := h.OTP.Save(ctx, addr, Session{OTPHash: h.OTP.Hash(addr, otp), Username: req.Username, HashedPassword: string(hash)}); err != nil {
 		utils.LogErrorCtx(ctx, "save signup session failed", "err", err)
 		fail(http.StatusInternalServerError, "could not start signup")
 		return
@@ -234,6 +310,9 @@ func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
 	addr := normalizeEmail(req.Email)
 	ip := utils.ClientIP(r, h.TrustedProxies)
 
+	if !h.gateIP(w, r, "resend", ip) {
+		return
+	}
 	if !h.takeCooldown(w, r, addr, ip) {
 		return
 	}
@@ -246,7 +325,10 @@ func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, err := h.OTP.Get(ctx, addr)
 	if errors.Is(err, ErrNoSession) {
-		fail(http.StatusBadRequest, "no pending signup for this email, please sign up again")
+		// Answer exactly as for a real resend (and keep the cooldown spent), so
+		// this endpoint cannot be used to find out which signups are pending.
+		utils.LogInfoCtx(ctx, "resend otp for unknown signup", "ip", ip)
+		h.otpSent(w, addr)
 		return
 	}
 	if err != nil {
@@ -261,7 +343,7 @@ func (h *Handler) ResendOTP(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusInternalServerError, "could not resend code")
 		return
 	}
-	sess.OTP = otp
+	sess.OTPHash = h.OTP.Hash(addr, otp)
 	if err := h.OTP.Save(ctx, addr, *sess); err != nil {
 		utils.LogErrorCtx(ctx, "save signup session failed", "err", err)
 		fail(http.StatusInternalServerError, "could not resend code")
@@ -287,23 +369,29 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	addr := normalizeEmail(req.Email)
 	const invalid = "OTP expired or invalid"
 
-	sess, err := h.OTP.Get(ctx, addr)
-	if errors.Is(err, ErrNoSession) {
-		utils.ErrorResponse(w, http.StatusBadRequest, invalid, nil)
+	// Per-IP budget first: one source cannot burn many people's attempts or
+	// spray guesses across many pending signups.
+	if !h.gateIP(w, r, "verify", utils.ClientIP(r, h.TrustedProxies)) {
 		return
 	}
+	// Verify charges the attempt before comparing, atomically in Redis.
+	res, sess, err := h.OTP.Verify(ctx, addr, req.OTP)
 	if err != nil {
-		utils.LogErrorCtx(ctx, "load signup session failed", "err", err)
+		utils.LogErrorCtx(ctx, "verify otp failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not verify code", nil)
 		return
 	}
-
-	if subtle.ConstantTimeCompare([]byte(sess.OTP), []byte(req.OTP)) != 1 {
-		discarded, err := h.OTP.Fail(ctx, addr)
-		if err != nil {
-			utils.LogErrorCtx(ctx, "record failed otp attempt failed", "err", err)
-		}
-		utils.LogInfoCtx(ctx, "wrong otp", "session_discarded", discarded)
+	switch res {
+	case VerifyOK:
+	case VerifyLocked:
+		utils.LogInfoCtx(ctx, "wrong otp", "session_discarded", true)
+		utils.ErrorResponse(w, http.StatusBadRequest, invalid, nil)
+		return
+	case VerifyWrong:
+		utils.LogInfoCtx(ctx, "wrong otp", "session_discarded", false)
+		utils.ErrorResponse(w, http.StatusBadRequest, invalid, nil)
+		return
+	default:
 		utils.ErrorResponse(w, http.StatusBadRequest, invalid, nil)
 		return
 	}
@@ -343,21 +431,52 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.Users.GetByEmail(r.Context(), normalizeEmail(req.Email))
+	ctx := r.Context()
+	addr := normalizeEmail(req.Email)
+	eid := emailID(addr)
+	ip := utils.ClientIP(r, h.TrustedProxies)
+
+	if !h.gateIP(w, r, "login", ip) {
+		return
+	}
+	// Refuse locked-out emails / IPs before spending any bcrypt time.
+	wait, err := h.Limiter.LoginLocked(ctx, eid, ip)
+	if err != nil {
+		utils.LogErrorCtx(ctx, "login lockout check failed", "err", err)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	if wait > 0 {
+		utils.LogWarnCtx(ctx, "login_blocked", "email_id", eid, "ip", ip, "retry_after_sec", int(wait.Seconds()))
+		tooMany(w, wait)
+		return
+	}
+
+	u, err := h.Users.GetByEmail(ctx, addr)
 	hash := dummyHash
 	if err == nil {
 		hash = []byte(u.PasswordHash)
 	} else if !errors.Is(err, user.ErrNotFound) {
-		utils.LogErrorCtx(r.Context(), "load user failed", "err", err)
+		utils.LogErrorCtx(ctx, "load user failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not log in", nil)
 		return
 	}
+	releaseHash, ok := h.acquireHash(w, r)
+	if !ok {
+		return
+	}
 	// Always compare, so unknown emails cost the same time as wrong passwords.
-	if cmpErr := bcrypt.CompareHashAndPassword(hash, []byte(req.Password)); cmpErr != nil || u == nil {
-		utils.LogInfoCtx(r.Context(), "login failed", "path", r.URL.Path)
+	cmpErr := bcrypt.CompareHashAndPassword(hash, []byte(req.Password))
+	releaseHash()
+	if cmpErr != nil || u == nil {
+		if err := h.Limiter.LoginFailed(context.WithoutCancel(ctx), eid, ip); err != nil {
+			utils.LogErrorCtx(ctx, "record login failure failed", "err", err)
+		}
+		utils.LogWarnCtx(ctx, "login_failed", "email_id", eid, "ip", ip)
 		utils.ErrorResponse(w, http.StatusUnauthorized, "invalid email or password", nil)
 		return
 	}
+	h.Limiter.LoginSucceeded(context.WithoutCancel(ctx), eid)
 	utils.LogInfoCtx(r.Context(), "user logged in", "user_id", u.ID)
 	h.respondTokens(w, r, http.StatusOK, u)
 }
@@ -367,6 +486,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	var req refreshReq
 	if !utils.BindAndValidate(w, r, &req) {
+		return
+	}
+	if !h.gateIP(w, r, "refresh", utils.ClientIP(r, h.TrustedProxies)) {
 		return
 	}
 	claims, err := h.Tokens.Parse(req.RefreshToken, Refresh)

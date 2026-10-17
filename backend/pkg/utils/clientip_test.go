@@ -20,7 +20,9 @@ func TestClientIP(t *testing.T) {
 		{"falls back to X-Real-IP", "10.0.0.5:80", "", "198.51.100.8", "198.51.100.8"},
 		{"garbage header falls back", "10.0.0.5:80", "not-an-ip", "", "10.0.0.5"},
 		{"no headers", "10.0.0.5:80", "", "", "10.0.0.5"},
-		{"ipv6 peer", "[2001:db8::1]:443", "", "", "2001:db8::1"},
+		{"ipv6 peer is masked to its /64", "[2001:db8:1:2:aaaa:bbbb:cccc:dddd]:443", "", "", "2001:db8:1:2::"},
+		{"ipv6 client behind proxy is masked", "10.0.0.5:80", "2001:db8:1:2:1::9", "", "2001:db8:1:2::"},
+		{"ipv4-mapped ipv6 stays ipv4", "[::ffff:203.0.113.9]:443", "", "", "203.0.113.9"},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest("GET", "/", nil)

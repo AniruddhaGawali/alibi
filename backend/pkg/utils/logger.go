@@ -19,3 +19,6 @@ func LogInfoCtx(ctx context.Context, msg string, args ...any) { slog.InfoContext
 func LogErrorCtx(ctx context.Context, msg string, args ...any) {
 	slog.ErrorContext(ctx, msg, args...)
 }
+
+// LogWarnCtx is the context-aware LogWarn.
+func LogWarnCtx(ctx context.Context, msg string, args ...any) { slog.WarnContext(ctx, msg, args...) }

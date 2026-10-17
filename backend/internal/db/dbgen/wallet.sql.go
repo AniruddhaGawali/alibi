@@ -11,21 +11,21 @@ import (
 
 const adjustTokenBalance = `-- name: AdjustTokenBalance :one
 UPDATE users
-SET token_balance = token_balance + $1::int
-WHERE id = $2 AND token_balance + $1::int >= 0
+SET token_balance = token_balance + $1::bigint
+WHERE id = $2 AND token_balance + $1::bigint >= 0
 RETURNING token_balance
 `
 
 type AdjustTokenBalanceParams struct {
-	Delta int32
+	Delta int64
 	ID    string
 }
 
 // Adds delta (negative to spend). The WHERE clause turns an overdraw into "no
 // rows", so concurrent spends can never push the balance below zero.
-func (q *Queries) AdjustTokenBalance(ctx context.Context, arg AdjustTokenBalanceParams) (int32, error) {
+func (q *Queries) AdjustTokenBalance(ctx context.Context, arg AdjustTokenBalanceParams) (int64, error) {
 	row := q.db.QueryRow(ctx, adjustTokenBalance, arg.Delta, arg.ID)
-	var token_balance int32
+	var token_balance int64
 	err := row.Scan(&token_balance)
 	return token_balance, err
 }
@@ -34,9 +34,9 @@ const getTokenBalance = `-- name: GetTokenBalance :one
 SELECT token_balance FROM users WHERE id = $1
 `
 
-func (q *Queries) GetTokenBalance(ctx context.Context, id string) (int32, error) {
+func (q *Queries) GetTokenBalance(ctx context.Context, id string) (int64, error) {
 	row := q.db.QueryRow(ctx, getTokenBalance, id)
-	var token_balance int32
+	var token_balance int64
 	err := row.Scan(&token_balance)
 	return token_balance, err
 }

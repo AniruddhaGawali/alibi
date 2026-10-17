@@ -250,3 +250,62 @@ func TestRequeueResetsAttemptCount(t *testing.T) {
 		t.Fatalf("requeued = %+v", back)
 	}
 }
+
+func TestDLQIsCappedAndDropsOldest(t *testing.T) {
+	b, mr := newBroker(t, WithDLQMaxLen(3), WithRetryPolicy(1, time.Millisecond, time.Millisecond))
+	ctx := context.Background()
+	for _, p := range []string{"a", "b", "c", "d", "e"} {
+		_ = b.Publish(ctx, "jobs", []byte(p))
+		_ = b.Consume(ctx, "jobs", func(context.Context, models.Message) error { return &models.DlqError{Reason: "x"} })
+	}
+	got := payloads(mr, "dlq")
+	if len(got) != 3 || got[0] != "e" || got[2] != "c" {
+		t.Fatalf("dlq = %v, want [e d c]", got)
+	}
+}
+
+func TestPruneRemovesMatchingMessages(t *testing.T) {
+	b, mr := newBroker(t)
+	ctx := context.Background()
+	for _, p := range []string{"keep", "drop", "keep", "drop"} {
+		_ = b.Publish(ctx, "jobs", []byte(p))
+	}
+	n, err := b.Prune(ctx, "jobs", func(p []byte) bool { return string(p) == "drop" })
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if got := payloads(mr, "jobs"); len(got) != 2 || got[0] != "keep" || got[1] != "keep" {
+		t.Fatalf("left = %v", got)
+	}
+}
+
+func TestRequeueMovesInOneScriptAndKeepsForeignEntries(t *testing.T) {
+	b, mr := newBroker(t)
+	ctx := context.Background()
+	_, _ = mr.Lpush("dlq", "not-an-envelope")
+	_ = b.push(ctx, "dlq", envelope{ID: "m1", Attempts: 4, Payload: []byte("p")})
+	n, err := b.Requeue(ctx, "dlq", "jobs", 10)
+	if err != nil || n != 2 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if mr.Exists("dlq") {
+		t.Fatal("dlq should be empty")
+	}
+	items, _ := mr.List("jobs")
+	if len(items) != 2 {
+		t.Fatalf("jobs = %v", items)
+	}
+	var sawEnv, sawRaw bool
+	for _, it := range items {
+		switch {
+		case it == "not-an-envelope":
+			sawRaw = true
+		default:
+			e := decode(it)
+			sawEnv = e.ID == "m1" && e.Attempts == 0 && string(e.Payload) == "p"
+		}
+	}
+	if !sawEnv || !sawRaw {
+		t.Fatalf("jobs = %v", items)
+	}
+}

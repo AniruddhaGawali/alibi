@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d alibi"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   mongo:
     image: mongo:7
@@ -16,6 +21,12 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   redis:
     image: redis:7
@@ -23,6 +34,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
@@ -52,15 +68,19 @@ services:
       - clickhouse
 
   # --- Application services (start with: docker compose --profile app up -d --build) ---
-  # Both read secrets from .env; the *_URI / endpoint values below override it so
-  # the containers reach each other by service name instead of localhost.
+  # Each service gets an explicit allow-list of variables (least privilege): the
+  # API never sees the Brevo SMTP password, the worker never sees JWT_SECRET or
+  # the database URIs. Values come from .env through ${VAR} interpolation; an
+  # unset optional variable is passed as empty and the app falls back to its
+  # default; required ones (JWT_SECRET, BREVO_*) are validated by the app at
+  # startup, so infra-only `docker compose up` works without them. The *_URI / endpoint values below point the containers at each
+  # other by service name instead of localhost.
 
   api:
     profiles: ["app"]
     build:
       context: ./backend
       target: api
-    env_file: .env
     environment:
       POSTGRES_URI: postgres://postgres:password@postgres:5432/alibi?sslmode=disable
       MONGO_URI: mongodb://mongo:27017
@@ -68,13 +88,40 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4318
       OLLAMA_HOST: http://host.docker.internal:11434
       HTTP_ADDR: ":8080"
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-}
+      JWT_REFRESH_TTL_HOURS: ${JWT_REFRESH_TTL_HOURS:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MIGRATE_ON_START: ${MIGRATE_ON_START:-}
+      HTTP_WRITE_TIMEOUT_SECONDS: ${HTTP_WRITE_TIMEOUT_SECONDS:-}
+      OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-}
+      OTP_COOLDOWN_SECONDS: ${OTP_COOLDOWN_SECONDS:-}
+      OTP_EMAIL_DAILY_MAX: ${OTP_EMAIL_DAILY_MAX:-}
+      OTP_IP_MAX: ${OTP_IP_MAX:-}
+      OTP_IP_WINDOW_MINUTES: ${OTP_IP_WINDOW_MINUTES:-}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-}
+      AUTH_IP_MAX: ${AUTH_IP_MAX:-}
+      AUTH_IP_WINDOW_MINUTES: ${AUTH_IP_WINDOW_MINUTES:-}
+      LOGIN_MAX_FAILURES: ${LOGIN_MAX_FAILURES:-}
+      BCRYPT_WORKERS: ${BCRYPT_WORKERS:-}
+      # Loopback only unless you set it: list your reverse proxy / load balancer here.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      PG_MAX_CONNS: ${PG_MAX_CONNS:-}
+      PG_MIN_CONNS: ${PG_MIN_CONNS:-}
+      MONGO_MAX_POOL_SIZE: ${MONGO_MAX_POOL_SIZE:-}
+      REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-}
+      DB_CONNECT_TIMEOUT_SECONDS: ${DB_CONNECT_TIMEOUT_SECONDS:-}
     ports:
       - "8080:8080"
     depends_on:
-      - postgres
-      - mongo
-      - redis
-      - otel-collector
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 15s
@@ -91,14 +138,24 @@ services:
     build:
       context: ./backend
       target: worker
-    env_file: .env
     environment:
       REDIS_URI: redis://redis:6379
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4318
       WORKER_HTTP_ADDR: ":8081"
+      BREVO_SMTP_HOST: ${BREVO_SMTP_HOST:-}
+      BREVO_SMTP_PORT: ${BREVO_SMTP_PORT:-}
+      BREVO_SMTP_USER: ${BREVO_SMTP_USER:-}
+      BREVO_SMTP_PASS: ${BREVO_SMTP_PASS:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+      WORKER_MONITOR_SECONDS: ${WORKER_MONITOR_SECONDS:-}
+      REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-}
+      DB_CONNECT_TIMEOUT_SECONDS: ${DB_CONNECT_TIMEOUT_SECONDS:-}
     depends_on:
-      - redis
-      - otel-collector
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
       interval: 15s

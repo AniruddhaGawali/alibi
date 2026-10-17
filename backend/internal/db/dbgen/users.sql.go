@@ -43,7 +43,7 @@ type CreateUserParams struct {
 	Username     string
 	Email        string
 	PasswordHash string
-	TokenBalance int32
+	TokenBalance int64
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {

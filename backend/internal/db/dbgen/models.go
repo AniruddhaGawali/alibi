@@ -16,7 +16,7 @@ type User struct {
 	AvatarDefault   *int16
 	AvatarUpdatedAt *time.Time
 	Trophies        int32
-	TokenBalance    int32
+	TokenBalance    int64
 	CreatedAt       time.Time
 }
 

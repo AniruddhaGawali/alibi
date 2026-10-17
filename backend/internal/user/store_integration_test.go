@@ -2,16 +2,59 @@ package user_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"net/url"
 	"os"
+	"sync"
 	"testing"
 
 	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/user"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Runs against a real PostgreSQL when TEST_POSTGRES_URI is set, e.g.
+// throwawayDatabase creates an empty database named alibi_test_<random> on the
+// server TEST_POSTGRES_URI points at and returns a pool for it. The test never
+// touches any existing database; the new one is dropped when the test ends.
+func throwawayDatabase(t *testing.T, adminURI string) *pgxpool.Pool {
+	t.Helper()
+	ctx := context.Background()
+	var rnd [6]byte
+	_, _ = rand.Read(rnd[:])
+	name := "alibi_test_" + hex.EncodeToString(rnd[:])
+
+	admin, err := db.ConnectPostgres(&config.Config{PostgresURI: adminURI, PGMaxConns: 2, ConnectTimeout: 5e9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+		admin.Close()
+	})
+
+	u, err := url.Parse(adminURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + name
+	pool, err := db.ConnectPostgres(&config.Config{PostgresURI: u.String(), PGMaxConns: 8, ConnectTimeout: 5e9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close) // runs before the DROP above (cleanups are LIFO)
+	return pool
+}
+
+// Runs against a real PostgreSQL when TEST_POSTGRES_URI is set. It only needs
+// permission to CREATE DATABASE and works in a throwaway database of its own, so
+// any server is safe to point it at:
 //
 //	docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw postgres:16
 //	TEST_POSTGRES_URI=postgres://postgres:pw@localhost:55432/postgres go test ./internal/user
@@ -21,16 +64,24 @@ func TestPGStore(t *testing.T) {
 		t.Skip("TEST_POSTGRES_URI not set")
 	}
 	ctx := context.Background()
-	pool, err := db.ConnectPostgres(&config.Config{PostgresURI: uri, PGMaxConns: 4, ConnectTimeout: 5e9})
-	if err != nil {
-		t.Fatal(err)
+	pool := throwawayDatabase(t, uri)
+
+	// Several replicas starting at once must apply each migration exactly once.
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- db.Migrate(ctx, pool) }()
 	}
-	defer pool.Close()
-	_, _ = pool.Exec(ctx, "DROP TABLE IF EXISTS user_avatars, users, goose_db_version")
-	for i := 0; i < 2; i++ { // migrations must be idempotent
-		if err := db.Migrate(ctx, pool); err != nil {
-			t.Fatalf("migrate run %d: %v", i+1, err)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent migrate: %v", err)
 		}
+	}
+	if err := db.Migrate(ctx, pool); err != nil { // and re-running is a no-op
+		t.Fatalf("migrate again: %v", err)
 	}
 
 	s := user.NewPGStore(pool)
@@ -66,6 +117,12 @@ func TestPGStore(t *testing.T) {
 	img, at, err := s.GetAvatar(ctx, u.ID)
 	if err != nil || len(img) != 5 || at.IsZero() {
 		t.Fatalf("get avatar: %v %v", img, err)
+	}
+	if at2, err := s.AvatarUpdatedAt(ctx, u.ID); err != nil || !at2.Equal(at) {
+		t.Fatalf("AvatarUpdatedAt = %v %v, want %v", at2, err, at)
+	}
+	if _, err := s.SetAvatarCustom(ctx, u.ID, make([]byte, 1<<20+1)); err == nil {
+		t.Fatal("an image over 1 MB must violate user_avatars_size")
 	}
 	if _, err := s.SetAvatarCustom(ctx, u.ID, []byte{9, 9}); err != nil { // replace, not duplicate
 		t.Fatal(err)
@@ -110,6 +167,15 @@ func TestPGStore(t *testing.T) {
 	}
 	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 16 {
 		t.Fatalf("balance after rejected overdraw = %d", n)
+	}
+	// The balance is 64-bit: repeated large grants must not overflow.
+	for i := 0; i < 3; i++ {
+		if _, err := s.AdjustTokenBalance(ctx, u.ID, 2_000_000_000); err != nil {
+			t.Fatalf("large grant %d: %v", i, err)
+		}
+	}
+	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 6_000_000_016 {
+		t.Fatalf("balance = %d", n)
 	}
 	if _, err := s.AdjustTokenBalance(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, user.ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)

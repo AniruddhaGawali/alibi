@@ -45,6 +45,9 @@ type Store interface {
 	SetAvatarCustom(ctx context.Context, id string, jpeg []byte) (time.Time, error)
 	// GetAvatar returns the custom image, or ErrNotFound if there is none.
 	GetAvatar(ctx context.Context, id string) ([]byte, time.Time, error)
+	// AvatarUpdatedAt returns when the custom image was last set without
+	// reading its bytes, or ErrNotFound if there is none.
+	AvatarUpdatedAt(ctx context.Context, id string) (time.Time, error)
 }
 
 // The users table is defined in backend/sql/*.sql. Profile reads select
@@ -82,7 +85,7 @@ func notFound(err error) error {
 
 func (s *PGStore) Create(ctx context.Context, username, email, passwordHash string, tokens int) (*User, error) {
 	row, err := s.q.CreateUser(ctx, dbgen.CreateUserParams{
-		Username: username, Email: email, PasswordHash: passwordHash, TokenBalance: int32(tokens),
+		Username: username, Email: email, PasswordHash: passwordHash, TokenBalance: int64(tokens),
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
@@ -150,24 +153,32 @@ func (s *PGStore) GetAvatar(ctx context.Context, id string) ([]byte, time.Time, 
 	return row.Data, row.UpdatedAt, nil
 }
 
+func (s *PGStore) AvatarUpdatedAt(ctx context.Context, id string) (time.Time, error) {
+	at, err := s.q.GetAvatarUpdatedAt(ctx, id)
+	if err != nil {
+		return time.Time{}, notFound(err)
+	}
+	return at, nil
+}
+
 func (s *PGStore) GetTokenBalance(ctx context.Context, id string) (int64, error) {
 	n, err := s.q.GetTokenBalance(ctx, id)
 	if err != nil {
 		return 0, notFound(err)
 	}
-	return int64(n), nil
+	return n, nil
 }
 
 // AdjustTokenBalance atomically adds delta and returns the new balance. The
 // query refuses to go below zero; we then tell "unknown user" from
 // "insufficient tokens" with a second read.
 func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta int64) (int64, error) {
-	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: int32(delta)})
+	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gErr := s.GetTokenBalance(ctx, id); gErr != nil {
 			return 0, gErr
 		}
 		return 0, ErrInsufficientTokens
 	}
-	return int64(n), err
+	return n, err
 }

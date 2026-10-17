@@ -26,6 +26,18 @@ func (q *Queries) GetAvatar(ctx context.Context, id string) (GetAvatarRow, error
 	return i, err
 }
 
+const getAvatarUpdatedAt = `-- name: GetAvatarUpdatedAt :one
+SELECT updated_at FROM user_avatars WHERE user_id = $1
+`
+
+// Cheap revalidation lookup: no image bytes are read.
+func (q *Queries) GetAvatarUpdatedAt(ctx context.Context, id string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, getAvatarUpdatedAt, id)
+	var updated_at time.Time
+	err := row.Scan(&updated_at)
+	return updated_at, err
+}
+
 const setCustomAvatar = `-- name: SetCustomAvatar :one
 WITH saved AS (
     INSERT INTO user_avatars (user_id, data, updated_at)

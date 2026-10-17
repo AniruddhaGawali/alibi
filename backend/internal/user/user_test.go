@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +21,8 @@ type fakeStore struct {
 	u     *User
 	image []byte
 	at    time.Time
+
+	metaReads, imageReads int
 }
 
 func (f *fakeStore) Create(context.Context, string, string, string, int) (*User, error) {
@@ -40,10 +43,19 @@ func (f *fakeStore) SetAvatarCustom(_ context.Context, _ string, jpg []byte) (ti
 	return f.at, nil
 }
 func (f *fakeStore) GetAvatar(context.Context, string) ([]byte, time.Time, error) {
+	f.imageReads++
 	if f.image == nil {
 		return nil, time.Time{}, ErrNotFound
 	}
 	return f.image, f.at, nil
+}
+
+func (f *fakeStore) AvatarUpdatedAt(context.Context, string) (time.Time, error) {
+	f.metaReads++
+	if f.image == nil {
+		return time.Time{}, ErrNotFound
+	}
+	return f.at, nil
 }
 
 // fakeBalances stands in for wallet.Service.
@@ -223,7 +235,86 @@ func TestCustomAvatarIsResizedStoredAndServed(t *testing.T) {
 }
 
 func TestProcessAvatarRejectsHugeDimensions(t *testing.T) {
-	if _, err := processAvatar(pngBytes(8001, 1)); err == nil {
+	if _, err := processAvatar(pngBytes(maxSourcePx+1, 1)); err == nil {
 		t.Fatal("expected error for oversized dimensions")
+	}
+	// Within the side limit but over the pixel budget (a small, compressible PNG).
+	if _, err := processAvatar(pngBytes(maxSourcePx, maxSourceArea/maxSourcePx+1)); err == nil {
+		t.Fatal("expected error for oversized area")
+	}
+}
+
+func TestConditionalAvatarRequestDoesNotReadTheImage(t *testing.T) {
+	h, st, _ := newHandler(t)
+	h.SetAvatar(httptest.NewRecorder(), multipartReq(t, nil, pngBytes(300, 200)))
+	get := func(mod func(*http.Request)) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", avatarURLPrefix+st.u.ID, nil)
+		req.SetPathValue("id", st.u.ID)
+		mod(req)
+		r := httptest.NewRecorder()
+		h.Avatar(r, req)
+		return r
+	}
+	first := get(func(*http.Request) {})
+	etag := first.Header().Get("ETag")
+	if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != "public, max-age=300, must-revalidate" {
+		t.Fatalf("first: %d %v", first.Code, first.Header())
+	}
+	st.imageReads = 0
+	if r := get(func(q *http.Request) { q.Header.Set("If-None-Match", etag) }); r.Code != 304 || r.Body.Len() != 0 {
+		t.Fatalf("etag revalidation: %d", r.Code)
+	}
+	if r := get(func(q *http.Request) { q.Header.Set("If-Modified-Since", st.at.UTC().Format(http.TimeFormat)) }); r.Code != 304 {
+		t.Fatalf("ims revalidation: %d", r.Code)
+	}
+	if st.imageReads != 0 {
+		t.Fatalf("image bytes were read %d times for conditional requests", st.imageReads)
+	}
+	// A stale validator still gets the image.
+	if r := get(func(q *http.Request) { q.Header.Set("If-None-Match", `"old"`) }); r.Code != 200 {
+		t.Fatalf("stale etag: %d", r.Code)
+	}
+	// Only the current versioned URL is immutable.
+	v := get(func(q *http.Request) { q.URL.RawQuery = "v=" + strconv.FormatInt(st.at.Unix(), 10) })
+	if cc := v.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("versioned url cache-control = %q", cc)
+	}
+	old := get(func(q *http.Request) { q.URL.RawQuery = "v=1" })
+	if cc := old.Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
+		t.Fatalf("stale version must not be immutable: %q", cc)
+	}
+}
+
+type denyUploads struct{}
+
+func (denyUploads) Allow(context.Context, string) (time.Duration, error) {
+	return 90 * time.Second, nil
+}
+
+func TestAvatarUploadRateLimited(t *testing.T) {
+	h, st, _ := newHandler(t)
+	WithUploadLimiter(denyUploads{})(h)
+	rec := httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "90" || st.image != nil {
+		t.Fatalf("got %d retry-after=%q stored=%v", rec.Code, rec.Header().Get("Retry-After"), st.image != nil)
+	}
+	// Choosing a default avatar is not an upload and stays allowed.
+	rec = httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, map[string]string{"avatar": "2"}, nil))
+	if rec.Code != 200 {
+		t.Fatalf("default avatar: %d", rec.Code)
+	}
+}
+
+func TestAvatarDecodeConcurrencyIsBounded(t *testing.T) {
+	h, _, _ := newHandler(t)
+	for i := 0; i < cap(h.decoding); i++ {
+		h.decoding <- struct{}{}
+	}
+	rec := httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("got %d", rec.Code)
 	}
 }

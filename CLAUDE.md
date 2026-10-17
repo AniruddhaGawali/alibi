@@ -15,5 +15,5 @@ When you add or change a skill, update `INDEX.md` and this list.
 
 ## Checks before finishing
 
-- Backend: `cd backend && go build ./... && go vet ./... && go test ./...`; if you touched `backend/sql/`, also `make sqlc` and `make sqlc-diff` (needs the `sqlc` and `goose` CLIs, see `backend/sql/README.md`)
+- Backend: `cd backend && go build ./... && go vet ./... && go test ./... && go mod tidy -diff`; if you touched `backend/sql/`, also `make sqlc` and `make sqlc-diff` (needs the `sqlc` and `goose` CLIs, see `backend/sql/README.md`)
 - Frontend: `cd frontend && npm run build && npm run lint` (the stock shadcn "only-export-components" warnings in `components/ui/` are expected)
