@@ -20,6 +20,16 @@ func newBroker(t *testing.T, opts ...Option) (*RedisListBroker, *miniredis.Minir
 	return NewRedisListBroker(client, "dlq", opts...), mr
 }
 
+// payloads returns the decoded payloads stored in a Redis list.
+func payloads(mr *miniredis.Miniredis, key string) []string {
+	items, _ := mr.List(key)
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = string(decode(it).Payload)
+	}
+	return out
+}
+
 func TestConsumeEmptyReturnsErrNoMessage(t *testing.T) {
 	b, _ := newBroker(t)
 	if err := b.Consume(context.Background(), "jobs", nil); !errors.Is(err, ErrNoMessage) {
@@ -57,7 +67,7 @@ func TestDlqErrorGoesStraightToDLQ(t *testing.T) {
 	if !errors.As(err, &dlq) {
 		t.Fatalf("got %v, want DlqError", err)
 	}
-	if items, _ := mr.List("dlq"); len(items) != 1 || items[0] != "bad" {
+	if items := payloads(mr, "dlq"); len(items) != 1 || items[0] != "bad" {
 		t.Fatalf("dlq = %v", items)
 	}
 	if mr.Exists("jobs") {
@@ -86,7 +96,7 @@ func TestGenericErrorRetriesThenDeadLetters(t *testing.T) {
 	if !errors.As(err, &dlq) {
 		t.Fatalf("third failure: got %v, want DlqError", err)
 	}
-	if items, _ := mr.List("dlq"); len(items) != 1 {
+	if items := payloads(mr, "dlq"); len(items) != 1 {
 		t.Fatalf("dlq = %v", items)
 	}
 	if mr.Exists("jobs") {
@@ -108,7 +118,7 @@ func TestWorkerErrorRequeuesWithNewPayloadAndKeepsCount(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		_ = b.Consume(ctx, "jobs", handler)
 	}
-	items, _ := mr.List("jobs")
+	items := payloads(mr, "jobs")
 	if len(items) != 1 || items[0] != `{"n":2}` {
 		t.Fatalf("jobs = %v, want rewritten payload", items)
 	}
@@ -118,7 +128,7 @@ func TestWorkerErrorRequeuesWithNewPayloadAndKeepsCount(t *testing.T) {
 	if !errors.As(err, &dlq) {
 		t.Fatalf("got %v, want DlqError", err)
 	}
-	if items, _ := mr.List("dlq"); len(items) != 1 || items[0] != `{"n":3}` {
+	if items := payloads(mr, "dlq"); len(items) != 1 || items[0] != `{"n":3}` {
 		t.Fatalf("dlq = %v", items)
 	}
 }
@@ -144,5 +154,34 @@ func TestBackoffBounds(t *testing.T) {
 		if got := b.backoff(attempts); got != want {
 			t.Errorf("backoff(%d) = %v, want %v", attempts, got, want)
 		}
+	}
+}
+
+func TestIdenticalPayloadsHaveIndependentRetryCounts(t *testing.T) {
+	b, mr := newBroker(t) // maxAttempts = 3
+	ctx := context.Background()
+	_ = b.Publish(ctx, "jobs", []byte("same"))
+	_ = b.Publish(ctx, "jobs", []byte("same"))
+	boom := errors.New("boom")
+
+	// Fail one message twice; its twin must not inherit those failures.
+	var firstID string
+	fail := func(_ context.Context, m models.Message) error {
+		if firstID == "" {
+			firstID = m.ID
+		}
+		if m.ID != firstID {
+			return nil
+		}
+		return boom
+	}
+	_ = b.Consume(ctx, "jobs", fail) // first message fails, requeued
+	_ = b.Consume(ctx, "jobs", fail) // twin succeeds
+	_ = b.Consume(ctx, "jobs", fail) // first fails again (2 of 3)
+	if mr.Exists("dlq") {
+		t.Fatal("message dead-lettered before reaching max attempts")
+	}
+	if items := payloads(mr, "jobs"); len(items) != 1 {
+		t.Fatalf("jobs = %v, want the one failing message", items)
 	}
 }

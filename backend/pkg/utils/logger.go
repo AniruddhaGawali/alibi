@@ -11,6 +11,7 @@ import (
 
 func LogInfo(msg string, args ...any)  { slog.Info(msg, args...) }
 func LogError(msg string, args ...any) { slog.Error(msg, args...) }
+func LogWarn(msg string, args ...any)  { slog.Warn(msg, args...) }
 
 // LogInfoCtx / LogErrorCtx carry the request context so the record is linked
 // to the active trace span. Prefer them inside HTTP handlers.

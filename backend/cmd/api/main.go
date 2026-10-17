@@ -14,7 +14,6 @@ import (
 	"backend/internal/health"
 	"backend/internal/llm"
 	"backend/internal/middleware"
-	"backend/internal/queue"
 	"backend/pkg/logger"
 	"backend/pkg/utils"
 )
@@ -34,11 +33,7 @@ func run() error {
 		return err
 	}
 
-	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "localhost:4318"
-	}
-	shutdownTelemetry, err := logger.Init(context.Background(), "alibi-api", endpoint)
+	shutdownTelemetry, err := logger.Init(context.Background(), "alibi-api", cfg.OTLPEndpoint)
 	if err != nil {
 		return err
 	}
@@ -59,25 +54,29 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	defer mongoClient.Disconnect(context.Background())
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := mongoClient.Disconnect(ctx); err != nil {
+			utils.LogError("mongo disconnect failed", "err", err)
+		}
+	}()
 
 	rdb, err := db.ConnectRedis(cfg)
 	if err != nil {
 		return err
 	}
-	defer rdb.Close()
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			utils.LogError("redis close failed", "err", err)
+		}
+	}()
 
-	ollamaHost := os.Getenv("OLLAMA_HOST")
-	if ollamaHost == "" {
-		ollamaHost = "http://localhost:11434"
-	}
-	llmClients, err := llm.NewClients(ollamaHost, os.Getenv("OPENROUTER_API_KEY"))
+	llmClients, err := llm.NewClients(cfg.OllamaHost, cfg.OpenRouterAPIKey)
 	if err != nil {
 		return err
 	}
 	llmClients.PingOllama(context.Background())
-
-	_ = queue.NewRedisListBroker(rdb, "dlq")
 
 	checker := health.New(map[string]health.Check{
 		"postgres": pg.Ping,
@@ -89,11 +88,11 @@ func run() error {
 	mux.HandleFunc("GET /health", checker.Handler)
 
 	srv := &http.Server{
-		Addr:              ":8080",
+		Addr:              cfg.HTTPAddr,
 		Handler:           middleware.Logging(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
+		WriteTimeout:      cfg.WriteTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 

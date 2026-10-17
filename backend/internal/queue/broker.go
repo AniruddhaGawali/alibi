@@ -2,7 +2,7 @@ package queue
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -31,7 +31,6 @@ const (
 	defaultBaseBackoff = 500 * time.Millisecond
 	defaultMaxBackoff  = 30 * time.Second
 	defaultPopTimeout  = 2 * time.Second
-	attemptsTTL        = 24 * time.Hour
 	cleanupTimeout     = 5 * time.Second
 )
 
@@ -76,8 +75,42 @@ func NewRedisListBroker(client *redis.Client, dlqName string, opts ...Option) *R
 	return b
 }
 
+// envelope is what actually sits in Redis. It gives every message its own ID
+// and carries the failure count with it, so retries are tracked per message
+// (two publishes of identical bytes never share a counter) and nothing
+// outside the message has to survive a crash.
+type envelope struct {
+	ID       string `json:"id"`
+	Attempts int    `json:"attempts"`
+	Payload  []byte `json:"payload"`
+}
+
+func newID() string {
+	var buf [16]byte
+	_, _ = rand.Read(buf[:])
+	return hex.EncodeToString(buf[:])
+}
+
 func (b *RedisListBroker) Publish(ctx context.Context, topic string, payload []byte) error {
-	return b.client.LPush(ctx, topic, payload).Err()
+	return b.push(ctx, topic, envelope{ID: newID(), Payload: payload})
+}
+
+func (b *RedisListBroker) push(ctx context.Context, topic string, env envelope) error {
+	raw, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("queue: encode message: %w", err)
+	}
+	return b.client.LPush(ctx, topic, raw).Err()
+}
+
+// decode reads an envelope. Anything that is not one (e.g. pushed by hand)
+// is treated as a fresh message with that payload.
+func decode(raw string) envelope {
+	var env envelope
+	if err := json.Unmarshal([]byte(raw), &env); err != nil || env.ID == "" {
+		return envelope{ID: newID(), Payload: []byte(raw)}
+	}
+	return env
 }
 
 // Consume pops one message and runs handler on it.
@@ -88,8 +121,10 @@ func (b *RedisListBroker) Publish(ctx context.Context, topic string, payload []b
 //   - any other error: the message is re-queued unchanged.
 //
 // Re-queued messages are counted; after maxAttempts failures they go to the
-// DLQ instead, so a poison message cannot loop forever. Between attempts the
-// consumer waits with exponential backoff to avoid a hot retry loop.
+// DLQ instead, so a poison message cannot loop forever. The message is put
+// back on the topic before the backoff wait, so a crash during the wait
+// cannot lose it; the wait then throttles this consumer between attempts to
+// avoid a hot retry loop.
 func (b *RedisListBroker) Consume(ctx context.Context, topic string, handler Handler) error {
 	data, err := b.client.BRPop(ctx, b.popTimeout, topic).Result()
 	if errors.Is(err, redis.Nil) {
@@ -98,11 +133,10 @@ func (b *RedisListBroker) Consume(ctx context.Context, topic string, handler Han
 	if err != nil {
 		return fmt.Errorf("queue: pop %q: %w", topic, err)
 	}
-	raw := []byte(data[1])
+	env := decode(data[1])
 
-	herr := handler(ctx, models.Message{ID: data[0], Payload: raw})
+	herr := handler(ctx, models.Message{ID: env.ID, Payload: env.Payload})
 	if herr == nil {
-		b.clearAttempts(ctx, topic, raw)
 		return nil
 	}
 
@@ -113,10 +147,9 @@ func (b *RedisListBroker) Consume(ctx context.Context, topic string, handler Han
 
 	var dlqErr *models.DlqError
 	if errors.As(herr, &dlqErr) {
-		return b.deadLetter(cctx, topic, raw, dlqErr)
+		return b.deadLetter(cctx, topic, env, dlqErr)
 	}
 
-	next := raw
 	var wErr *models.WorkerError
 	if errors.As(herr, &wErr) && wErr.Data != nil {
 		payload, mErr := json.Marshal(wErr.Data)
@@ -125,39 +158,35 @@ func (b *RedisListBroker) Consume(ctx context.Context, topic string, handler Han
 			slog.ErrorContext(ctx, "queue: marshal worker error data", "topic", topic, "err", mErr)
 			herr = errors.Join(herr, mErr)
 		} else {
-			next = payload
+			env.Payload = payload
 		}
 	}
 
-	attempts, aErr := b.bumpAttempts(cctx, topic, raw, next)
-	if aErr != nil {
-		slog.ErrorContext(ctx, "queue: track attempts", "topic", topic, "err", aErr)
-	}
-	if attempts >= b.maxAttempts {
+	env.Attempts++
+	if env.Attempts >= b.maxAttempts {
 		reason := fmt.Sprintf("max attempts (%d) exceeded: %v", b.maxAttempts, herr)
-		return b.deadLetter(cctx, topic, next, &models.DlqError{Reason: reason})
+		return b.deadLetter(cctx, topic, env, &models.DlqError{Reason: reason})
 	}
 
-	b.sleep(ctx, b.backoff(attempts))
-	if pErr := b.Publish(cctx, topic, next); pErr != nil {
+	if pErr := b.push(cctx, topic, env); pErr != nil {
 		slog.ErrorContext(ctx, "queue: requeue failed, message lost", "topic", topic, "err", pErr)
 		return errors.Join(herr, pErr)
 	}
+	b.sleep(ctx, b.backoff(env.Attempts))
 	return herr
 }
 
-// deadLetter moves payload to the DLQ. If that fails the message goes back on
-// its topic so it is not lost.
-func (b *RedisListBroker) deadLetter(ctx context.Context, topic string, payload []byte, dlqErr *models.DlqError) error {
+// deadLetter moves the message to the DLQ. If that fails the message goes back
+// on its topic so it is not lost.
+func (b *RedisListBroker) deadLetter(ctx context.Context, topic string, env envelope, dlqErr *models.DlqError) error {
 	slog.ErrorContext(ctx, "queue: message dead-lettered", "topic", topic, "dlq", b.dlqName, "reason", dlqErr.Reason)
-	if err := b.Publish(ctx, b.dlqName, payload); err != nil {
+	if err := b.push(ctx, b.dlqName, env); err != nil {
 		slog.ErrorContext(ctx, "queue: DLQ publish failed, requeueing", "topic", topic, "err", err)
-		if rErr := b.Publish(ctx, topic, payload); rErr != nil {
+		if rErr := b.push(ctx, topic, env); rErr != nil {
 			return errors.Join(dlqErr, err, rErr)
 		}
 		return errors.Join(dlqErr, err)
 	}
-	b.clearAttempts(ctx, topic, payload)
 	return dlqErr
 }
 
@@ -176,41 +205,5 @@ func (b *RedisListBroker) sleep(ctx context.Context, d time.Duration) {
 	select {
 	case <-t.C:
 	case <-ctx.Done():
-	}
-}
-
-func attemptsKey(topic string) string { return "queue:attempts:" + topic }
-
-func payloadID(payload []byte) string {
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:])
-}
-
-// bumpAttempts increments the failure count for old and, when the payload
-// changed, carries the count over to next so a rewritten message keeps its
-// history.
-func (b *RedisListBroker) bumpAttempts(ctx context.Context, topic string, old, next []byte) (int, error) {
-	key := attemptsKey(topic)
-	n, err := b.client.HIncrBy(ctx, key, payloadID(old), 1).Result()
-	if err != nil {
-		return 1, err
-	}
-	pipe := b.client.Pipeline()
-	if string(old) != string(next) {
-		pipe.HDel(ctx, key, payloadID(old))
-		pipe.HSet(ctx, key, payloadID(next), n)
-	}
-	pipe.Expire(ctx, key, attemptsTTL)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return int(n), err
-	}
-	return int(n), nil
-}
-
-func (b *RedisListBroker) clearAttempts(ctx context.Context, topic string, payload []byte) {
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
-	defer cancel()
-	if err := b.client.HDel(cctx, attemptsKey(topic), payloadID(payload)).Err(); err != nil {
-		slog.WarnContext(ctx, "queue: clear attempts", "topic", topic, "err", err)
 	}
 }

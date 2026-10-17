@@ -4,6 +4,7 @@ go 1.27.1
 
 require (
 	github.com/OpenRouterTeam/go-sdk v0.9.61
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/joho/godotenv v1.5.1
@@ -19,7 +20,6 @@ require (
 )
 
 require (
-	github.com/alicebob/miniredis/v2 v2.40.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
