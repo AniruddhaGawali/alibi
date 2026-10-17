@@ -77,6 +77,12 @@ start.mutate(id)                                                  // or await st
 - Mirror server values into Zustand only when components outside the query need them; otherwise read straight from the hook.
 - Forms submit through a mutation hook; see the `alibi-forms` skill.
 
+## Auth and cache notes
+
+- The JWT is read in exactly one place, `apiClient.ts`, from `src/utils/cookieHelpers.ts`. Don't read or attach tokens anywhere else. A planned move to an HttpOnly cookie set by the backend would then only change `apiClient.ts` (send `credentials: 'include'`), not any endpoint or component.
+- Invalidation scans the cached queries for matching tags, which is cheap at this size. Keep tags coarse and few (`'Dashboard'`, `'Stories'`, `{type, id}` for items) rather than one tag per field, and don't invalidate on every keystroke or poll.
+- Query failures arrive as `ApiError` with the backend's `message`; a 503 from `/health`-style degraded states and 429 (e.g. out of tokens) are meaningful, so show `error.message` rather than a generic failure.
+
 ## When the backend endpoint doesn't exist yet
 
 Still declare the endpoint with `createApi` against the agreed path from `docs/development_phases_and_todo_list.md`, and say in your reply that the endpoint is pending. Don't mock data inside components.

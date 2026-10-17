@@ -1,22 +1,21 @@
 package utils
 
 import (
+	"context"
 	"log/slog"
-	"os"
 )
 
-var logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+// These helpers log through slog's default logger, which logger.Init replaces
+// with the OpenTelemetry-exporting handler. Before Init they fall back to
+// slog's standard stderr output.
 
-func LogInfo(msg string, args ...any) {
-	logger.Info(msg, args...)
-}
+func LogInfo(msg string, args ...any)  { slog.Info(msg, args...) }
+func LogError(msg string, args ...any) { slog.Error(msg, args...) }
+func LogWarn(msg string, args ...any)  { slog.Warn(msg, args...) }
 
-func LogError(msg string, args ...any) {
-	logger.Error(msg, args...)
-}
-
-// LogFatal logs at error level and exits the process with status 1.
-func LogFatal(msg string, args ...any) {
-	logger.Error(msg, args...)
-	os.Exit(1)
+// LogInfoCtx / LogErrorCtx carry the request context so the record is linked
+// to the active trace span. Prefer them inside HTTP handlers.
+func LogInfoCtx(ctx context.Context, msg string, args ...any) { slog.InfoContext(ctx, msg, args...) }
+func LogErrorCtx(ctx context.Context, msg string, args ...any) {
+	slog.ErrorContext(ctx, msg, args...)
 }
