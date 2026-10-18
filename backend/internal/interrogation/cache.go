@@ -20,10 +20,11 @@ const maxPrepared = 512
 // prepared is everything about one (case, suspect) pair that a question needs and
 // that does not depend on the player.
 type prepared struct {
-	cfg     *CaseConfig
-	target  *Suspect
-	system  string // llm.BuildSystemPrompt, identical on every call so providers can cache its prefix
-	expires time.Time
+	cfg      *CaseConfig
+	target   *Suspect
+	locked   string // system prompt without the suspect's secrets, until the detective touches on them
+	unlocked string // system prompt with the secrets (llm.Unlocked)
+	expires  time.Time
 }
 
 type prepCache struct {
@@ -75,7 +76,9 @@ func (s *Service) prepare(ctx context.Context, storyID, suspectID string) (*prep
 	p := &prepared{
 		cfg:    c,
 		target: target,
-		system: llm.BuildSystemPrompt(llm.CaseInfo{Title: c.Title, Plot: c.Plot}, target.Persona, others),
+		// Both prompts are identical from call to call, so providers can cache their prefix.
+		locked:   llm.BuildSystemPrompt(llm.CaseInfo{Title: c.Title, Plot: c.Plot}, target.Persona, others, false),
+		unlocked: llm.BuildSystemPrompt(llm.CaseInfo{Title: c.Title, Plot: c.Plot}, target.Persona, others, true),
 	}
 	s.cache.put(key, p)
 	return p, nil

@@ -99,10 +99,15 @@ func (s *MongoStore) SuspectOf(ctx context.Context, userID, caseID, messageID st
 }
 
 // History returns the player's exchanges with one suspect of a case, oldest
-// first: the latest limit of them when there are more.
-func (s *MongoStore) History(ctx context.Context, userID, caseID, suspectID string, limit int) ([]Message, error) {
-	cur, err := s.coll.Find(ctx,
-		bson.D{{Key: "user_id", Value: userID}, {Key: "case_id", Value: caseID}, {Key: "suspect_id", Value: suspectID}},
+// first: the latest limit of them when there are more. A non-empty playID keeps
+// only that play-through's exchanges (a replayed case starts a blank conversation);
+// empty returns every play-through.
+func (s *MongoStore) History(ctx context.Context, userID, caseID, suspectID, playID string, limit int) ([]Message, error) {
+	filter := bson.D{{Key: "user_id", Value: userID}, {Key: "case_id", Value: caseID}, {Key: "suspect_id", Value: suspectID}}
+	if playID != "" {
+		filter = append(filter, bson.E{Key: "play_id", Value: playID})
+	}
+	cur, err := s.coll.Find(ctx, filter,
 		options.Find().SetSort(bson.D{{Key: "timestamp", Value: -1}, {Key: "_id", Value: -1}}).SetLimit(int64(limit)),
 	)
 	if err != nil {

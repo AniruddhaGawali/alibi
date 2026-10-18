@@ -70,7 +70,8 @@ UPDATE suspects AS x SET
     persona                = v.persona,
     public_alibi           = v.alibi,
     hidden_truth           = v.truth,
-    confession_triggers    = v.triggers
+    confession_triggers    = v.triggers,
+    confession_keywords    = v.keywords
 FROM stories s,
      (VALUES
         ('Lady Eleanor',
@@ -78,26 +79,30 @@ FROM stories s,
          'Proud, cold and aristocratic. Sharp-tongued and highly defensive; treats the questioning as an insult to the family name.',
          'In the rose garden all morning, tending the beds, until Thomas came running out.',
          'She did not poison the tea. She has run up a massive gambling debt she has hidden from her husband and the police, and she is terrified it will come out and make her look guilty.',
-         'If the detective asks about money, debts, cards or why she is so defensive, she grows flustered and finally admits the gambling debt, while insisting it has nothing to do with the murder.'),
+         'If the detective asks about money, debts, cards or why she is so defensive, she grows flustered and finally admits the gambling debt, while insisting it has nothing to do with the murder.',
+         ARRAY['money','debt','card','gambl','bankrupt','afford']),
         ('Thomas',
          'his butler for twenty years',
          'Fiercely loyal to the family, formal and precise, easily flustered when his routine is questioned.',
          'Served his lordship his morning tea at 9:30 AM precisely, then polished the silver in the pantry.',
          'He served the tea at 9:30 AM and did not poison it. Around 9:45 AM, on his way back from the pantry, he glimpsed Beatrice leaving the study, which she had no reason to enter; out of loyalty to the household he does not want to accuse a fellow servant.',
-         'If the detective presses him on whether anyone else went near the study after he served the tea, he admits, reluctantly, that he saw Beatrice coming out of the study at about 9:45 AM.'),
+         'If the detective presses him on whether anyone else went near the study after he served the tea, he admits, reluctantly, that he saw Beatrice coming out of the study at about 9:45 AM.',
+         ARRAY['anyone+study','else+study','near+study','see+study','saw+study','visit+study','enter+study']),
         ('Arthur',
          'his groundskeeper',
          'Gruff, blunt and resentful; makes no secret that he disliked his lordship for underpaying him.',
          'Mending the greenhouse door all morning.',
          'He did not poison the tea and was at the greenhouse all morning. He openly hated Lord Harrington for paying him a pittance, and he keeps rat poison in the shed, which makes him nervous about being blamed.',
-         'If the detective asks about poisons, the shed or what he keeps for pests, he admits there is rat poison in the shed but swears it is arsenic, not cyanide, and that the shed stays locked.'),
+         'If the detective asks about poisons, the shed or what he keeps for pests, he admits there is rat poison in the shed but swears it is arsenic, not cyanide, and that the shed stays locked.',
+         ARRAY['poison','shed','pest','rat']),
         ('Beatrice',
          'his maid',
          'Quiet, polite and eager to please; keeps her eyes down and her answers short.',
          'Sweeping the upstairs corridor all morning; came down when Thomas shouted.',
          'She poisoned the tea with cyanide at 9:45 AM. Lord Harrington had caught her stealing from the household and was going to have her arrested. She slipped into the study after Thomas served the tea and before the body was found at 10:00 AM.',
-         'She fiercely denies everything unless the detective asks who was last in the study, or confronts her with being seen near the study at 9:45 AM. Then she breaks down and confesses that she poisoned the tea because he was going to have her arrested for stealing.')
-     ) AS v(name, relationship, persona, alibi, truth, triggers)
+         'She fiercely denies everything unless the detective asks who was last in the study, or confronts her with being seen near the study at 9:45 AM. Then she breaks down and confesses that she poisoned the tea because he was going to have her arrested for stealing.',
+         ARRAY['last+study','seen+study','near+study','leaving+study','out+study','45+study'])
+     ) AS v(name, relationship, persona, alibi, truth, triggers, keywords)
 WHERE s.title = 'The Poisoned Earl Grey' AND x.case_id = s.id AND x.name = v.name;
 
 INSERT INTO users (username, email, password_hash, trophies, cases_solved, token_balance)

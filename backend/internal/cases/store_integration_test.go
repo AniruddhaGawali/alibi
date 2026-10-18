@@ -150,10 +150,7 @@ func TestPGStore(t *testing.T) {
 	if err != nil || len(notes) != 2 || notes[0].Body != "second" || notes[0].ChatMessageID != nil || notes[0].SuspectID == nil || *notes[0].SuspectID != suspectID {
 		t.Fatalf("list notes: %+v %v", notes, err)
 	}
-	u2, err := user.NewPGStore(pool).Create(ctx, "watson", "w@x.co", "h", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	u2 := v // watson, created above
 	if theirs, _ := store.Notes(ctx, u2.ID, story); len(theirs) != 0 {
 		t.Fatalf("notes leaked to another user: %+v", theirs)
 	}

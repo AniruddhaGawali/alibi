@@ -50,7 +50,7 @@ type Wallet interface {
 
 // History reads earlier exchanges; *chat.MongoStore implements it.
 type History interface {
-	History(ctx context.Context, userID, caseID, suspectID string, limit int) ([]chat.Message, error)
+	History(ctx context.Context, userID, caseID, suspectID, playID string, limit int) ([]chat.Message, error)
 }
 
 // Publisher puts a message on a queue; *queue.RedisListBroker implements it.
@@ -185,9 +185,15 @@ func (s *Service) GenerateSuspectResponse(ctx context.Context, in Input) (*Resul
 		prepErr error
 	)
 	var g errgroup.Group
-	g.Go(func() error { lock, lockErr = s.store.Lock(ctx, in.UserID); return nil })
+	g.Go(func() error {
+		// The conversation is that of the play-through the player is in now, so a replayed
+		// case starts with a blank memory: the lock comes first, then the history.
+		if lock, lockErr = s.store.Lock(ctx, in.UserID); lockErr == nil && lock != nil && lock.StoryID == in.StoryID {
+			history = s.recentTurns(ctx, in.UserID, in.StoryID, in.SuspectID, lock.CaseID)
+		}
+		return nil
+	})
 	g.Go(func() error { prep, prepErr = s.prepare(ctx, in.StoryID, in.SuspectID); return nil })
-	g.Go(func() error { history = s.recentTurns(ctx, in.UserID, in.StoryID, in.SuspectID); return nil })
 	_ = g.Wait()
 	if lockErr != nil {
 		return nil, fmt.Errorf("load lock: %w", lockErr)
@@ -216,13 +222,24 @@ func (s *Service) GenerateSuspectResponse(ctx context.Context, in Input) (*Resul
 		return nil, fmt.Errorf("spend token: %w", err)
 	}
 
+	// The secrets go into the prompt only once the question (or an earlier one) touches on them.
+	asked := make([]string, 0, len(history)+1)
+	for _, t := range history {
+		asked = append(asked, t.Question)
+	}
+	asked = append(asked, in.Question)
+	system := prep.locked
+	if llm.Unlocked(prep.target.Persona, asked) {
+		system = prep.unlocked
+	}
+
 	model := llm.ModelOrDefault(prep.cfg.Model)
 	started := time.Now()
 	gctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), generateTimeout)
 	defer cancel()
 	reply, err := s.gen.Generate(gctx, llm.Request{
 		Model:    model,
-		System:   prep.system,
+		System:   system,
 		History:  history,
 		Question: in.Question,
 		User:     in.UserID,
@@ -362,13 +379,13 @@ func (s *Service) retryFailed(ctx context.Context) {
 // recentTurns returns the last few exchanges with this suspect, oldest first, so
 // the model remembers what was already said. It is best effort: if MongoDB is
 // slow or down the question is answered without memory rather than failing.
-func (s *Service) recentTurns(ctx context.Context, userID, caseID, suspectID string) []llm.Turn {
+func (s *Service) recentTurns(ctx context.Context, userID, caseID, suspectID, playID string) []llm.Turn {
 	if s.history == nil {
 		return nil
 	}
 	hctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	msgs, err := s.history.History(hctx, userID, caseID, suspectID, historyTurns)
+	msgs, err := s.history.History(hctx, userID, caseID, suspectID, playID, historyTurns)
 	if err != nil {
 		utils.LogWarnCtx(ctx, "load recent chat failed; answering without memory", "user_id", userID, "err", err)
 		return nil

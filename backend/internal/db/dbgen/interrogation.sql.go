@@ -37,7 +37,7 @@ func (q *Queries) GetInterrogationCase(ctx context.Context, id string) (GetInter
 
 const getInterrogationSuspect = `-- name: GetInterrogationSuspect :one
 SELECT id, name, role, relationship_to_victim, persona, public_alibi,
-       hidden_truth, confession_triggers, is_culprit
+       hidden_truth, confession_triggers, confession_keywords, is_culprit
 FROM suspects
 WHERE case_id = $1 AND id = $2
 `
@@ -56,6 +56,7 @@ type GetInterrogationSuspectRow struct {
 	PublicAlibi          string
 	HiddenTruth          string
 	ConfessionTriggers   string
+	ConfessionKeywords   []string
 	IsCulprit            bool
 }
 
@@ -74,6 +75,7 @@ func (q *Queries) GetInterrogationSuspect(ctx context.Context, arg GetInterrogat
 		&i.PublicAlibi,
 		&i.HiddenTruth,
 		&i.ConfessionTriggers,
+		&i.ConfessionKeywords,
 		&i.IsCulprit,
 	)
 	return i, err

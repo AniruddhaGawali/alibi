@@ -64,13 +64,13 @@ func TestWorkerHandle(t *testing.T) {
 }
 
 type fakeReader struct {
-	user, caseID, suspect string
-	limit                 int
-	err                   error
+	user, caseID, suspect, play string
+	limit                       int
+	err                         error
 }
 
-func (f *fakeReader) History(_ context.Context, u, c, s string, limit int) ([]Message, error) {
-	f.user, f.caseID, f.suspect, f.limit = u, c, s, limit
+func (f *fakeReader) History(_ context.Context, u, c, s, play string, limit int) ([]Message, error) {
+	f.user, f.caseID, f.suspect, f.play, f.limit = u, c, s, play, limit
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -104,5 +104,27 @@ func TestHistoryHandler(t *testing.T) {
 	}
 	if rec := serve(&fakeReader{err: errors.New("down")}, "/api/chat/"+caseID+"/"+suspect); rec.Code != 500 {
 		t.Fatalf("store error: %d", rec.Code)
+	}
+}
+
+func TestHistoryHandlerScopesToTheCurrentPlay(t *testing.T) {
+	serve := func(r *fakeReader, play func(context.Context, string, string) (string, error)) int {
+		h := NewHandler(r, func(context.Context) string { return user }, WithPlay(play))
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /api/chat/{case_id}/{suspect_id}", h.History)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/chat/"+caseID+"/"+suspect, nil))
+		return rec.Code
+	}
+	r := &fakeReader{}
+	if code := serve(r, func(_ context.Context, u, c string) (string, error) { return "play-2", nil }); code != 200 || r.play != "play-2" {
+		t.Fatalf("code %d play %q", code, r.play)
+	}
+	r = &fakeReader{}
+	if code := serve(r, func(context.Context, string, string) (string, error) { return "", nil }); code != 200 || r.play != "" {
+		t.Fatalf("no active play must not filter: code %d play %q", code, r.play)
+	}
+	if code := serve(&fakeReader{}, func(context.Context, string, string) (string, error) { return "", errors.New("down") }); code != 500 {
+		t.Fatalf("play lookup failure: %d", code)
 	}
 }

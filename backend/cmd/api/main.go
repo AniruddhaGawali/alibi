@@ -165,7 +165,15 @@ func run() error {
 		return err
 	}
 	chatBroker := queue.NewRedisListBroker(rdb, chat.DLQ)
-	chatH := chat.NewHandler(chatStore, auth.UserID)
+	interrogationStore := interrogation.NewPGStore(pg)
+	chatH := chat.NewHandler(chatStore, auth.UserID, chat.WithPlay(func(ctx context.Context, userID, caseID string) (string, error) {
+		// The conversation belongs to the play-through the player is in now; with none, they see all of it.
+		lock, err := interrogationStore.Lock(ctx, userID)
+		if err != nil || lock == nil || lock.StoryID != caseID {
+			return "", err
+		}
+		return lock.CaseID, nil
+	}))
 	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID).WithLogs(chatStore) // notes can point at log entries
 
 	guard := interrogation.NewRedisGuard(rdb, interrogation.GuardConfig{
@@ -179,7 +187,7 @@ func run() error {
 		StrikesPerHour:   cfg.LLMStrikesPerHour,
 		InFlightTTL:      cfg.LLMTimeout + 30*time.Second,
 	})
-	interrogationSvc := interrogation.NewService(interrogation.NewPGStore(pg), llmClients, walletSvc, chatBroker, chatStore, interrogation.WithGuard(guard))
+	interrogationSvc := interrogation.NewService(interrogationStore, llmClients, walletSvc, chatBroker, chatStore, interrogation.WithGuard(guard))
 	defer interrogationSvc.Wait() // let queued chat events finish publishing on shutdown
 
 	// Background work in this process: the chat storage worker and the daily token

@@ -98,15 +98,17 @@ func (w *fakeWallet) RefundQuestion(context.Context, string) (int64, error) {
 }
 
 type fakeHistory struct {
-	msgs  []chat.Message
-	err   error
-	limit int
-	calls int
+	msgs   []chat.Message
+	err    error
+	limit  int
+	calls  int
+	playID string
 }
 
-func (h *fakeHistory) History(_ context.Context, userID, caseID, suspectID string, limit int) ([]chat.Message, error) {
+func (h *fakeHistory) History(_ context.Context, userID, caseID, suspectID, playID string, limit int) ([]chat.Message, error) {
 	h.calls++
 	h.limit = limit
+	h.playID = playID
 	if userID != player || caseID != story || suspectID == "" {
 		return nil, nil
 	}

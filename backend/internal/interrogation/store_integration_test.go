@@ -35,9 +35,9 @@ func TestPGStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO suspects (case_id, name, role, initial_testimony, is_culprit, display_order,
-			relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers)
-		VALUES ($1, 'Beatrice', 'The Maid', 't', true, 2, 'his maid', 'quiet', 'upstairs', 'did it', 'asked who was last'),
-		       ($1, 'Thomas', 'The Butler', 't', false, 1, 'his butler', 'loyal', 'pantry', 'saw her', 'pressed')`, story); err != nil {
+			relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords)
+		VALUES ($1, 'Beatrice', 'The Maid', 't', true, 2, 'his maid', 'quiet', 'upstairs', 'did it', 'asked who was last', ARRAY['last+study','seen+study']),
+		       ($1, 'Thomas', 'The Butler', 't', false, 1, 'his butler', 'loyal', 'pantry', 'saw her', 'pressed', '{}')`, story); err != nil {
 		t.Fatal(err)
 	}
 
@@ -58,7 +58,7 @@ func TestPGStore(t *testing.T) {
 	}
 	b := target.Persona
 	if !b.IsCulprit || b.Relationship != "his maid" || b.Persona != "quiet" || b.PublicAlibi != "upstairs" ||
-		b.HiddenTruth != "did it" || b.ConfessionTriggers != "asked who was last" {
+		b.HiddenTruth != "did it" || b.ConfessionTriggers != "asked who was last" || len(b.TriggerKeywords) != 2 || b.TriggerKeywords[0] != "last+study" {
 		t.Fatalf("persona: %+v", b)
 	}
 	if _, _, err := s.Suspect(ctx, story, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"); !errors.Is(err, interrogation.ErrSuspectNotFound) {

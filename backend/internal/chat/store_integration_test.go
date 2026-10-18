@@ -58,7 +58,7 @@ func TestMongoStore(t *testing.T) {
 		t.Fatalf("duplicate: %v", err)
 	}
 
-	got, err := s.History(ctx, u, c, sus, 10)
+	got, err := s.History(ctx, u, c, sus, "", 10)
 	if err != nil || len(got) != 3 || got[0].ID != "1" || got[1].ID != "2" || got[2].ID != "3" {
 		t.Fatalf("history: %+v %v", got, err)
 	}
@@ -75,10 +75,24 @@ func TestMongoStore(t *testing.T) {
 		}
 	}
 	// The limit keeps the latest messages, still oldest first.
-	if got, _ = s.History(ctx, u, c, sus, 2); len(got) != 2 || got[0].ID != "2" || got[1].ID != "3" {
+	if got, _ = s.History(ctx, u, c, sus, "", 2); len(got) != 2 || got[0].ID != "2" || got[1].ID != "3" {
 		t.Fatalf("limited: %+v", got)
 	}
-	if got, _ = s.History(ctx, other, c, "s2", 10); len(got) != 0 || got == nil {
+	// A replayed case has its own play id: only that play-through's exchanges come back.
+	for i, play := range []string{"p1", "p2"} {
+		e := ev("play"+play, u, "s3", 10+i)
+		e.PlayID = play
+		if err := s.Insert(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ = s.History(ctx, u, c, "s3", "p2", 10); len(got) != 1 || got[0].ID != "playp2" {
+		t.Fatalf("play filter: %+v", got)
+	}
+	if got, _ = s.History(ctx, u, c, "s3", "", 10); len(got) != 2 {
+		t.Fatalf("no play filter: %+v", got)
+	}
+	if got, _ = s.History(ctx, other, c, "s2", "", 10); len(got) != 0 || got == nil {
 		t.Fatalf("other user's suspect: %+v", got)
 	}
 }

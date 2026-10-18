@@ -26,6 +26,11 @@ var (
 	ErrBadOutput = errors.New("llm: model returned no usable text")
 )
 
+// DenyDataCollection asks OpenRouter to route only to providers that do not store or
+// train on prompts (data_collection: "deny"). If no provider of a case's model meets
+// that, the call fails with an upstream error instead of falling back.
+const DenyDataCollection = true
+
 // maxReplyTokens hard-caps the answer; the prompt asks for MaxReplyWords.
 const maxReplyTokens = 160
 
@@ -83,6 +88,12 @@ func (c *Clients) Generate(ctx context.Context, req Request) (*Reply, error) {
 			components.CreateChatRequestPluginWeb(components.WebSearchPlugin{ID: components.WebSearchPluginIDWeb, Enabled: &off}),
 			components.CreateChatRequestPluginFileParser(components.FileParserPlugin{ID: components.FileParserPluginIDFileParser, Enabled: &off}),
 		},
+	}
+	if DenyDataCollection {
+		// Providers that log or train on prompts are skipped: the prompt holds the case's secrets.
+		chat.Provider = optionalnullable.From(&components.ProviderPreferences{
+			DataCollection: optionalnullable.From(openrouter.Pointer(components.DataCollectionDeny)),
+		})
 	}
 	if req.User != "" {
 		chat.User = openrouter.String(req.User)

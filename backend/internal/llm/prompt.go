@@ -25,7 +25,9 @@ type Persona struct {
 	PublicAlibi        string
 	HiddenTruth        string
 	ConfessionTriggers string
-	IsCulprit          bool
+	// TriggerKeywords gate the secrets (see Unlocked). Empty: the secrets are always in the prompt.
+	TriggerKeywords []string
+	IsCulprit       bool
 }
 
 // Acquaintance is another suspect of the same case, as this suspect knows them:
@@ -46,15 +48,21 @@ func AcquaintanceOf(p Persona) Acquaintance {
 // BuildSystemPrompt concatenates the three sections of a suspect's system prompt:
 // the persona with its dual-state (public alibi vs hidden truth) logic, what the
 // suspect knows about the other people in the case, and the strict rules.
-func BuildSystemPrompt(c CaseInfo, p Persona, others []Acquaintance) string {
+//
+// While unlocked is false (the detective has not yet touched on what the suspect hides, see
+// Unlocked) the prompt holds none of the secrets: no hidden truth, no confession triggers and
+// no culprit flag, and every suspect gets the same neutral "you are hiding something" line, so
+// even a successful prompt extraction reveals neither the solution nor, by elimination, who is
+// guilty.
+func BuildSystemPrompt(c CaseInfo, p Persona, others []Acquaintance, unlocked bool) string {
 	var b strings.Builder
-	writePersona(&b, c, p)
+	writePersona(&b, c, p, unlocked)
 	writeAcquaintances(&b, p, others)
 	writeRules(&b, p)
 	return b.String()
 }
 
-func writePersona(b *strings.Builder, c CaseInfo, p Persona) {
+func writePersona(b *strings.Builder, c CaseInfo, p Persona, unlocked bool) {
 	fmt.Fprintf(b, "## Who you are\n")
 	fmt.Fprintf(b, "You are %s, %s, a suspect in the case \"%s\". A detective is interrogating you.\n", p.Name, orUnknown(p.Role), c.Title)
 	if p.Relationship != "" {
@@ -70,6 +78,15 @@ func writePersona(b *strings.Builder, c CaseInfo, p Persona) {
 	fmt.Fprintf(b, "\n## What you say and what you hide\n")
 	if p.PublicAlibi != "" {
 		fmt.Fprintf(b, "Your public alibi, the account you give the detective: %s\n", p.PublicAlibi)
+	}
+	if !unlocked {
+		fmt.Fprintf(b, "You are hiding something about that day and you are afraid of being blamed. Stay in character: deflect, "+
+			"deny and stick to your public alibi. Do not volunteer anything beyond it, never confess or admit any secret, "+
+			"and never say whether you committed the crime.\n")
+		return
+	}
+	if len(p.TriggerKeywords) > 0 {
+		fmt.Fprintf(b, "The detective has just touched on what you are hiding. You may now slip or admit the relevant part of the truth below.\n")
 	}
 	if p.HiddenTruth != "" {
 		fmt.Fprintf(b, "The hidden truth, which you know but never volunteer: %s\n", p.HiddenTruth)

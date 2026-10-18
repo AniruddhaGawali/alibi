@@ -9,7 +9,7 @@ WHERE id = @id AND is_published;
 -- culprit flag that go into that suspect's own system prompt. Never return this
 -- row to a client, and never load these columns for any other suspect.
 SELECT id, name, role, relationship_to_victim, persona, public_alibi,
-       hidden_truth, confession_triggers, is_culprit
+       hidden_truth, confession_triggers, confession_keywords, is_culprit
 FROM suspects
 WHERE case_id = @case_id AND id = @id;
 

@@ -272,3 +272,54 @@ func TestPublishRetriesAndKeepsFailedEvents(t *testing.T) {
 		t.Fatalf("events after recovery = %+v", q.events)
 	}
 }
+
+// gatedStore gives the butler keyword gates, so his secrets stay out of the prompt until the question earns them.
+type gatedStore struct{ *fakeStore }
+
+func (g gatedStore) Suspect(ctx context.Context, storyID, suspectID string) (*Suspect, []llm.Acquaintance, error) {
+	t, others, err := g.fakeStore.Suspect(ctx, storyID, suspectID)
+	if t != nil {
+		t.TriggerKeywords = []string{"anyone+study"}
+		t.ConfessionTriggers = "BUTLER-TRIGGER"
+	}
+	return t, others, err
+}
+
+func TestSecretsStayOutOfThePromptUntilTheTriggerIsHit(t *testing.T) {
+	f := newFixture()
+	f.svc = NewService(gatedStore{f.store}, f.gen, f.wal, f.q, f.hist)
+
+	if _, err := ask(f, butler, "Where were you at 9:30?"); err != nil {
+		t.Fatal(err)
+	}
+	if sys := f.gen.got.System; strings.Contains(sys, "BUTLER-SECRET") || strings.Contains(sys, "BUTLER-TRIGGER") {
+		t.Fatalf("secrets in the prompt before the trigger:\n%s", sys)
+	}
+
+	if _, err := ask(f, butler, "Did you see anyone near the study?"); err != nil {
+		t.Fatal(err)
+	}
+	if sys := f.gen.got.System; !strings.Contains(sys, "BUTLER-SECRET") || !strings.Contains(sys, "BUTLER-TRIGGER") {
+		t.Fatalf("secrets missing after the trigger:\n%s", sys)
+	}
+
+	// A later, unrelated question keeps the suspect open while the hit is in the recent history.
+	f.hist.msgs = []chat.Message{{UserQuery: "Did you see anyone near the study?", AIResponse: "Hm."}}
+	if _, err := ask(f, butler, "And what is your name?"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.gen.got.System, "BUTLER-SECRET") {
+		t.Fatal("suspect closed up again straight after cracking")
+	}
+}
+
+// A replayed case starts a blank conversation: the history is read for the play-through the player is in.
+func TestHistoryIsScopedToThePlayThrough(t *testing.T) {
+	f := newFixture()
+	if _, err := ask(f, butler, "Where were you?"); err != nil {
+		t.Fatal(err)
+	}
+	if f.hist.playID != playCas {
+		t.Fatalf("history read for play %q, want %q", f.hist.playID, playCas)
+	}
+}

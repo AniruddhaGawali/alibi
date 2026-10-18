@@ -95,6 +95,6 @@ func (s *PGStore) Suspect(ctx context.Context, storyID, suspectID string) (*Susp
 	return &Suspect{ID: r.ID, Persona: llm.Persona{
 		Name: r.Name, Role: r.Role, Relationship: r.RelationshipToVictim, Persona: r.Persona,
 		PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth, ConfessionTriggers: r.ConfessionTriggers,
-		IsCulprit: r.IsCulprit,
+		TriggerKeywords: r.ConfessionKeywords, IsCulprit: r.IsCulprit,
 	}}, others, nil
 }

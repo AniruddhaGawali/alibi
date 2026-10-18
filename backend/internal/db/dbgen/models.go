@@ -60,6 +60,7 @@ type Suspect struct {
 	PublicAlibi          string
 	HiddenTruth          string
 	ConfessionTriggers   string
+	ConfessionKeywords   []string
 }
 
 type User struct {
