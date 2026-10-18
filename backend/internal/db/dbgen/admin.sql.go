@@ -12,11 +12,11 @@ import (
 
 const adminCreateCase = `-- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, is_published, llm_model)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8)
+        $6, $7, $8, $9::text[], $10, $11)
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, is_published, llm_model, created_at
+          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, created_at
 `
 
 type AdminCreateCaseParams struct {
@@ -26,6 +26,9 @@ type AdminCreateCaseParams struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
+	PenaltyTrophies int32
+	Resolution      string
+	Hints           []string
 	IsPublished     bool
 	LlmModel        string
 }
@@ -38,6 +41,9 @@ type AdminCreateCaseRow struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
+	PenaltyTrophies int32
+	Resolution      string
+	Hints           []string
 	IsPublished     bool
 	LlmModel        string
 	CreatedAt       time.Time
@@ -51,6 +57,9 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		arg.ThumbnailUrl,
 		arg.DifficultyLevel,
 		arg.RewardTrophies,
+		arg.PenaltyTrophies,
+		arg.Resolution,
+		arg.Hints,
 		arg.IsPublished,
 		arg.LlmModel,
 	)
@@ -63,6 +72,9 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		&i.ThumbnailUrl,
 		&i.DifficultyLevel,
 		&i.RewardTrophies,
+		&i.PenaltyTrophies,
+		&i.Resolution,
+		&i.Hints,
 		&i.IsPublished,
 		&i.LlmModel,
 		&i.CreatedAt,
@@ -78,11 +90,14 @@ UPDATE stories SET
     thumbnail_url    = COALESCE($4::text, thumbnail_url),
     difficulty_level = COALESCE($5::text, difficulty_level),
     reward_trophies  = COALESCE($6::int, reward_trophies),
-    is_published     = COALESCE($7::boolean, is_published),
-    llm_model        = COALESCE($8::text, llm_model)
-WHERE id = $9
+    penalty_trophies = COALESCE($7::int, penalty_trophies),
+    resolution       = COALESCE($8::text, resolution),
+    hints            = COALESCE($9::text[], hints),
+    is_published     = COALESCE($10::boolean, is_published),
+    llm_model        = COALESCE($11::text, llm_model)
+WHERE id = $12
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, is_published, llm_model, created_at
+          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, created_at
 `
 
 type AdminUpdateCaseParams struct {
@@ -92,6 +107,9 @@ type AdminUpdateCaseParams struct {
 	ThumbnailUrl    *string
 	DifficultyLevel *string
 	RewardTrophies  *int32
+	PenaltyTrophies *int32
+	Resolution      *string
+	Hints           []string
 	IsPublished     *bool
 	LlmModel        *string
 	ID              string
@@ -105,6 +123,9 @@ type AdminUpdateCaseRow struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
+	PenaltyTrophies int32
+	Resolution      string
+	Hints           []string
 	IsPublished     bool
 	LlmModel        string
 	CreatedAt       time.Time
@@ -119,6 +140,9 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		arg.ThumbnailUrl,
 		arg.DifficultyLevel,
 		arg.RewardTrophies,
+		arg.PenaltyTrophies,
+		arg.Resolution,
+		arg.Hints,
 		arg.IsPublished,
 		arg.LlmModel,
 		arg.ID,
@@ -132,6 +156,9 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		&i.ThumbnailUrl,
 		&i.DifficultyLevel,
 		&i.RewardTrophies,
+		&i.PenaltyTrophies,
+		&i.Resolution,
+		&i.Hints,
 		&i.IsPublished,
 		&i.LlmModel,
 		&i.CreatedAt,

@@ -78,10 +78,12 @@ func (q *Queries) GetUsernames(ctx context.Context, ids []string) ([]GetUsername
 }
 
 const listStories = `-- name: ListStories :many
-SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies
-FROM stories
-WHERE is_published
-ORDER BY created_at DESC, id
+SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
+       CASE WHEN r.user_id IS NULL THEN '' WHEN r.correct THEN 'solved' ELSE 'failed' END::text AS outcome
+FROM stories s
+LEFT JOIN case_results r ON r.story_id = s.id AND r.user_id = $1
+WHERE s.is_published
+ORDER BY s.created_at DESC, s.id
 `
 
 type ListStoriesRow struct {
@@ -91,11 +93,13 @@ type ListStoriesRow struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
+	Outcome         string
 }
 
-// Metadata for the dashboard cards, newest first.
-func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
-	rows, err := q.db.Query(ctx, listStories)
+// Metadata for the dashboard cards, newest first, with how the caller's own
+// attempt ended (” = not closed yet).
+func (q *Queries) ListStories(ctx context.Context, userID string) ([]ListStoriesRow, error) {
+	rows, err := q.db.Query(ctx, listStories, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -110,6 +114,7 @@ func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
 			&i.ThumbnailUrl,
 			&i.DifficultyLevel,
 			&i.RewardTrophies,
+			&i.Outcome,
 		); err != nil {
 			return nil, err
 		}
@@ -119,24 +124,6 @@ func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
 		return nil, err
 	}
 	return items, nil
-}
-
-const releaseCaseLock = `-- name: ReleaseCaseLock :execrows
-DELETE FROM active_case_locks WHERE user_id = $1 AND case_id = $2
-`
-
-type ReleaseCaseLockParams struct {
-	UserID string
-	CaseID string
-}
-
-// Frees the user when the case is finished (called by the accusation flow, Phase 5).
-func (q *Queries) ReleaseCaseLock(ctx context.Context, arg ReleaseCaseLockParams) (int64, error) {
-	result, err := q.db.Exec(ctx, releaseCaseLock, arg.UserID, arg.CaseID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const topPlayers = `-- name: TopPlayers :many
@@ -165,6 +152,36 @@ func (q *Queries) TopPlayers(ctx context.Context, maxRows int32) ([]TopPlayersRo
 	for rows.Next() {
 		var i TopPlayersRow
 		if err := rows.Scan(&i.ID, &i.Username, &i.Trophies); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const usernamesByIDs = `-- name: UsernamesByIDs :many
+SELECT id, username FROM users WHERE id = ANY($1::uuid[])
+`
+
+type UsernamesByIDsRow struct {
+	ID       string
+	Username string
+}
+
+// Display names for the ids the Redis leaderboard returned.
+func (q *Queries) UsernamesByIDs(ctx context.Context, ids []string) ([]UsernamesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, usernamesByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UsernamesByIDsRow{}
+	for rows.Next() {
+		var i UsernamesByIDsRow
+		if err := rows.Scan(&i.ID, &i.Username); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

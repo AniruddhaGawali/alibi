@@ -20,6 +20,8 @@ type Story struct {
 	ThumbnailURL    string `json:"thumbnail_url"`
 	DifficultyLevel string `json:"difficulty_level"`
 	RewardTrophies  int    `json:"reward_trophies"`
+	// Outcome is how the caller's attempt ended: "solved", "failed", or null when the case is still open to them.
+	Outcome *string `json:"outcome"`
 }
 
 // Player is one ranked user.
@@ -44,13 +46,15 @@ type ActiveCase struct {
 
 // Store is the PostgreSQL side of the dashboard; *PGStore implements it.
 type Store interface {
-	ListStories(ctx context.Context) ([]Story, error)
+	ListStories(ctx context.Context, userID string) ([]Story, error)
 	// Stats returns user.ErrNotFound for an unknown user.
 	Stats(ctx context.Context, userID string) (UserStats, error)
 	// ActiveCase returns the user's locked case, or nil when they are free.
 	ActiveCase(ctx context.Context, userID string) (*ActiveCase, error)
 	// TopPlayers is the leaderboard: the players with the most trophies, best first.
 	TopPlayers(ctx context.Context, limit int) ([]Player, error)
+	// Usernames maps user ids to display names; unknown ids are left out.
+	Usernames(ctx context.Context, ids []string) (map[string]string, error)
 }
 
 // PGStore implements Store. All SQL lives in sql/queries/dashboard.sql and is
@@ -59,17 +63,21 @@ type PGStore struct{ q *dbgen.Queries }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
 
-func (s *PGStore) ListStories(ctx context.Context) ([]Story, error) {
-	rows, err := s.q.ListStories(ctx)
+func (s *PGStore) ListStories(ctx context.Context, userID string) ([]Story, error) {
+	rows, err := s.q.ListStories(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Story, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Story{
+		st := Story{
 			ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, ThumbnailURL: r.ThumbnailUrl,
 			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies),
-		})
+		}
+		if r.Outcome != "" {
+			st.Outcome = &r.Outcome
+		}
+		out = append(out, st)
 	}
 	return out, nil
 }
@@ -101,6 +109,18 @@ func (s *PGStore) TopPlayers(ctx context.Context, limit int) ([]Player, error) {
 	out := make([]Player, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, Player{ID: r.ID, Username: r.Username, Trophies: int64(r.Trophies)})
+	}
+	return out, nil
+}
+
+func (s *PGStore) Usernames(ctx context.Context, ids []string) (map[string]string, error) {
+	rows, err := s.q.UsernamesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.ID] = r.Username
 	}
 	return out, nil
 }

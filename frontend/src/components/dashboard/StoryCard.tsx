@@ -15,7 +15,8 @@ const DIFFICULTY: Record<Difficulty, { label: string; variant: 'secondary' | 'de
 }
 
 /**
- * A case card. The button says Continue for the case already in progress, Start otherwise.
+ * A case card. The button says Continue for the case already in progress, Start otherwise, and
+ * View case file for one the player has closed (stamped SOLVED or CLOSED; it is played once).
  * While another case is in progress the card is locked: redacted, stamped CLASSIFIED, no button.
  */
 export default function StoryCard({
@@ -63,10 +64,11 @@ export default function StoryCard({
         </CardContent>
         <CardFooter>
           <Button className="w-full" disabled={busy || locked} onClick={() => onOpen?.(story)}>
-            {locked ? 'Locked' : inProgress ? 'Continue' : 'Start'}
+            {story.outcome ? 'View case file' : locked ? 'Locked' : inProgress ? 'Continue' : 'Start'}
           </Button>
         </CardFooter>
         {locked && <Stamp>Classified</Stamp>}
+        {story.outcome && <Stamp>{story.outcome === 'solved' ? 'Solved' : 'Closed'}</Stamp>}
       </Card>
     </div>
   )

@@ -137,3 +137,38 @@ func TestUpdateCase(t *testing.T) {
 		}
 	}
 }
+
+func TestHints(t *testing.T) {
+	// Up to three hints are saved in order; a case without hints gets an empty list.
+	s := &fakeStore{admin: true}
+	if rec := serve(s, &fakeModels{}, "POST", "/api/admin/cases", newCase+`,"hints":["a","b","c"]}`); rec.Code != 201 || len(s.created.Hints) != 3 || s.created.Hints[2] != "c" {
+		t.Fatalf("three hints: %d %s %+v", rec.Code, rec.Body, s.created)
+	}
+	s = &fakeStore{admin: true}
+	if rec := serve(s, &fakeModels{}, "POST", "/api/admin/cases", newCase+"}"); rec.Code != 201 || s.created.Hints == nil {
+		t.Fatalf("no hints: %d %+v", rec.Code, s.created)
+	}
+	// Too many, empty or oversized hints are refused.
+	for name, body := range map[string]string{
+		"four":  newCase + `,"hints":["a","b","c","d"]}`,
+		"empty": newCase + `,"hints":["a",""]}`,
+		"long":  newCase + `,"hints":["` + strings.Repeat("x", 1001) + `"]}`,
+	} {
+		if rec := serve(&fakeStore{admin: true}, &fakeModels{}, "POST", "/api/admin/cases", body); rec.Code != 422 {
+			t.Errorf("%s: status %d, want 422", name, rec.Code)
+		}
+	}
+	// PATCH: hints can be replaced or cleared with [], and left alone by omitting them.
+	s = &fakeStore{admin: true}
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"hints":["only"]}`); rec.Code != 200 || len(s.patched.Hints) != 1 {
+		t.Fatalf("replace: %d %+v", rec.Code, s.patched)
+	}
+	s = &fakeStore{admin: true}
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"hints":[]}`); rec.Code != 200 || s.patched.Hints == nil || len(s.patched.Hints) != 0 {
+		t.Fatalf("clear: %d %+v", rec.Code, s.patched)
+	}
+	s = &fakeStore{admin: true}
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"title":"x"}`); rec.Code != 200 || s.patched.Hints != nil {
+		t.Fatalf("omitted: %d %+v", rec.Code, s.patched)
+	}
+}

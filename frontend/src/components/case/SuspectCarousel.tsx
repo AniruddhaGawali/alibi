@@ -7,7 +7,7 @@ import { useGetSuspectsQuery } from '@/api/cases'
 import SuspectCard from './SuspectCard'
 
 /** Horizontal, swipeable row of suspect cards with arrow buttons. */
-export default function SuspectCarousel({ caseId }: { caseId: string }) {
+export default function SuspectCarousel({ caseId, chatLocked = false }: { caseId: string; chatLocked?: boolean }) {
   const { data: suspects, isPending, error } = useGetSuspectsQuery(caseId)
   const track = useRef<HTMLDivElement>(null)
 
@@ -45,7 +45,7 @@ export default function SuspectCarousel({ caseId }: { caseId: string }) {
       ) : (
         <div ref={track} className="flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth p-3 pb-5">
           {suspects.map((s) => (
-            <SuspectCard key={s.id} suspect={s} />
+            <SuspectCard key={s.id} suspect={s} chatLocked={chatLocked} />
           ))}
         </div>
       )}

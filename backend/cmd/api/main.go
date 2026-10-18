@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"backend/internal/accusation"
 	"backend/internal/admin"
 	"backend/internal/auth"
 	"backend/internal/cases"
@@ -211,8 +212,9 @@ func run() error {
 	defer func() { <-resetCron.Stop().Done() }() // waits for a running reset to finish
 	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID,
 		interrogation.WithClientIP(func(r *http.Request) string { return utils.ClientIP(r, cfg.TrustedProxies) }))
+	accuseH := accusation.NewHandler(accusation.NewPGStore(pg), accusation.NewRedisLeaderboard(rdb), auth.UserID)
 	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID)
-	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID)
+	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID).WithBoard(dashboard.NewRedisBoard(rdb))
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
 	mux.HandleFunc("POST /api/auth/resend-otp", authH.ResendOTP)
@@ -225,6 +227,9 @@ func run() error {
 	mux.HandleFunc("GET /api/cases/{id}/briefing", casesH.Briefing)
 	mux.HandleFunc("GET /api/cases/{id}/suspects", casesH.Suspects)
 	mux.HandleFunc("POST /api/cases/{id}/start", casesH.Start)
+	mux.HandleFunc("POST /api/cases/{id}/hints", casesH.Hints)
+	mux.HandleFunc("POST /api/cases/{id}/accuse", accuseH.Accuse)
+	mux.HandleFunc("GET /api/cases/{id}/result", casesH.Result)
 	mux.HandleFunc("GET /api/cases/{id}/notes", casesH.Notes)
 	mux.HandleFunc("POST /api/cases/{id}/notes", casesH.AddNote)
 	mux.HandleFunc("DELETE /api/cases/{id}/notes/{note_id}", casesH.DeleteNote)

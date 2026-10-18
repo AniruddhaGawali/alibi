@@ -11,7 +11,7 @@ import type { Suspect } from '@/api/cases'
  * One suspect: portrait, name, relation to the victim, first statement and a Chat button.
  * Clicking the card itself filters the interrogation logs to this suspect and scrolls to them.
  */
-export default function SuspectCard({ suspect }: { suspect: Suspect }) {
+export default function SuspectCard({ suspect, chatLocked = false }: { suspect: Suspect; chatLocked?: boolean }) {
   const openChat = useChatStore((s) => s.openChat)
   const setSuspectFilter = useGameStore((s) => s.setSuspectFilter)
 
@@ -48,6 +48,8 @@ export default function SuspectCard({ suspect }: { suspect: Suspect }) {
         “{suspect.initial_testimony}”
       </blockquote>
       <Button
+        disabled={chatLocked}
+        title={chatLocked ? 'This case is closed' : undefined}
         onClick={(e) => {
           e.stopPropagation()
           openChat(suspect.id)

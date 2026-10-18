@@ -47,26 +47,36 @@ func (h *Handler) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// DefaultPenaltyTrophies is what a wrong accusation costs when an admin does not say; it
+// matches the stories.penalty_trophies column default.
+const DefaultPenaltyTrophies = 5
+
 type createCaseReq struct {
-	Title           string `json:"title" validate:"required,max=200"`
-	Synopsis        string `json:"synopsis" validate:"required,max=2000"`
-	MainPlot        string `json:"main_plot" validate:"max=10000"`
-	ThumbnailURL    string `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
-	DifficultyLevel string `json:"difficulty_level" validate:"required,oneof=easy medium hard"`
-	RewardTrophies  int32  `json:"reward_trophies" validate:"min=0,max=1000"`
-	IsPublished     bool   `json:"is_published"`                           // false (a draft) when left out
-	LLMModel        string `json:"llm_model" validate:"omitempty,max=100"` // llm.DefaultModel when left out
+	Title           string   `json:"title" validate:"required,max=200"`
+	Synopsis        string   `json:"synopsis" validate:"required,max=2000"`
+	MainPlot        string   `json:"main_plot" validate:"max=10000"`
+	ThumbnailURL    string   `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
+	DifficultyLevel string   `json:"difficulty_level" validate:"required,oneof=easy medium hard"`
+	RewardTrophies  int32    `json:"reward_trophies" validate:"min=0,max=1000"`            // paid for a correct accusation
+	PenaltyTrophies *int32   `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"` // taken for a wrong one; DefaultPenaltyTrophies when left out
+	Resolution      string   `json:"resolution" validate:"max=10000"`                      // reveals the truth once the case is closed
+	Hints           []string `json:"hints" validate:"max=3,dive,required,max=1000"`        // progressive hints, easiest first
+	IsPublished     bool     `json:"is_published"`                                         // false (a draft) when left out
+	LLMModel        string   `json:"llm_model" validate:"omitempty,max=100"`               // llm.DefaultModel when left out
 }
 
 type updateCaseReq struct {
-	Title           *string `json:"title" validate:"omitempty,min=1,max=200"`
-	Synopsis        *string `json:"synopsis" validate:"omitempty,min=1,max=2000"`
-	MainPlot        *string `json:"main_plot" validate:"omitempty,max=10000"`
-	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
-	DifficultyLevel *string `json:"difficulty_level" validate:"omitempty,oneof=easy medium hard"`
-	RewardTrophies  *int32  `json:"reward_trophies" validate:"omitempty,min=0,max=1000"`
-	IsPublished     *bool   `json:"is_published"`
-	LLMModel        *string `json:"llm_model" validate:"omitempty,max=100"`
+	Title           *string   `json:"title" validate:"omitempty,min=1,max=200"`
+	Synopsis        *string   `json:"synopsis" validate:"omitempty,min=1,max=2000"`
+	MainPlot        *string   `json:"main_plot" validate:"omitempty,max=10000"`
+	ThumbnailURL    *string   `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
+	DifficultyLevel *string   `json:"difficulty_level" validate:"omitempty,oneof=easy medium hard"`
+	RewardTrophies  *int32    `json:"reward_trophies" validate:"omitempty,min=0,max=1000"`
+	PenaltyTrophies *int32    `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"`
+	Resolution      *string   `json:"resolution" validate:"omitempty,max=10000"`
+	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"` // [] clears them
+	IsPublished     *bool     `json:"is_published"`
+	LLMModel        *string   `json:"llm_model" validate:"omitempty,max=100"`
 }
 
 // CreateCase handles POST /api/admin/cases.
@@ -81,9 +91,17 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	if !h.checkModel(w, r, req.LLMModel) {
 		return
 	}
+	hints := req.Hints
+	if hints == nil {
+		hints = []string{}
+	}
+	penalty := int32(DefaultPenaltyTrophies)
+	if req.PenaltyTrophies != nil {
+		penalty = *req.PenaltyTrophies
+	}
 	c, err := h.store.CreateCase(r.Context(), CaseInput{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
-		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies,
+		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: penalty, Resolution: req.Resolution, Hints: hints,
 		IsPublished: req.IsPublished, LLMModel: req.LLMModel,
 	})
 	if errors.Is(err, ErrInvalid) {
@@ -119,9 +137,13 @@ func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 	if req.LLMModel != nil && !h.checkModel(w, r, *req.LLMModel) {
 		return
 	}
+	var hints []string
+	if req.Hints != nil {
+		hints = append([]string{}, *req.Hints...)
+	}
 	c, err := h.store.UpdateCase(r.Context(), id, CasePatch{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
-		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies,
+		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: req.PenaltyTrophies, Resolution: req.Resolution, Hints: hints,
 		IsPublished: req.IsPublished, LLMModel: req.LLMModel,
 	})
 	switch {

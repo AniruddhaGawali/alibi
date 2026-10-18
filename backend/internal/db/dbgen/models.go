@@ -9,10 +9,11 @@ import (
 )
 
 type ActiveCaseLock struct {
-	UserID   string
-	CaseID   string
-	StoryID  string
-	LockedAt time.Time
+	UserID    string
+	CaseID    string
+	StoryID   string
+	LockedAt  time.Time
+	HintsUsed int32
 }
 
 type CaseNote struct {
@@ -23,6 +24,17 @@ type CaseNote struct {
 	Body          string
 	CreatedAt     time.Time
 	ChatMessageID *string
+}
+
+type CaseResult struct {
+	UserID         string
+	StoryID        string
+	SuspectID      *string
+	Correct        bool
+	TrophiesChange int32
+	TrophiesAfter  int32
+	ResolvedAt     time.Time
+	HintPenalty    int32
 }
 
 type CaseScene struct {
@@ -44,6 +56,9 @@ type Story struct {
 	CreatedAt       time.Time
 	MainPlot        string
 	LlmModel        string
+	PenaltyTrophies int32
+	Resolution      string
+	Hints           []string
 }
 
 type Suspect struct {

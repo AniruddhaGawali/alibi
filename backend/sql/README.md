@@ -43,6 +43,9 @@ Rules:
 | `00008_avatars_in_object_storage.sql` | custom avatars move to the object store: `users.avatar_url` (public URL) + `avatar_path` (object path, for deleting a replaced image); drops `user_avatars` and `avatar_updated_at` |
 | `00009_create_case_briefing.sql` | `stories.main_plot`; `case_scenes` (image URL + display order, per case); `suspects` (role, avatar, initial testimony, server-only `is_culprit`, at most one culprit per case) |
 | `00010_create_case_notes.sql` | `case_notes`: a player's private notes per case, optionally about a suspect (`ON DELETE SET NULL`), body 1-1000 chars |
+| `00016_accusation_trophies.sql` | `stories.penalty_trophies` (trophies lost on a wrong accusation) and `stories.resolution` (closing text); with `reward_trophies` these are set per case by the admin |
+| `00017_case_results.sql` | `case_results`: one row per player per case, written by the accusation transaction. Closes the case (starting it again is a 409) and lets `GET /api/cases/{id}/result` show the verdict after a reload |
+| `00018_case_hints.sql` | `stories.hints` (up to 3 admin-written strings, server only until revealed), `active_case_locks.hints_used` (0-3) and `case_results.hint_penalty` |
 
 There are no custom SQL functions or stored procedures; `gen_random_uuid()` is built into PostgreSQL 13+. The `alibi` database itself is created by `docker-compose.yml`.
 
@@ -67,7 +70,8 @@ There are no custom SQL functions or stored procedures; `gen_random_uuid()` is b
 | `ratelimit:otpdaily:email:{email}` | counter; at most 5 codes per email per day | 24 h |
 | `ratelimit:otp:ip:{ip}` | counter; at most 10 codes per client IP per window | 15 min |
 | `blacklist:jwt:{jti}` | `true`; logged-out access and refresh tokens | remaining lifetime of that token |
-| `leaderboard:trophies` | ZSET: member = user ID, score = trophies. Whatever changes `users.trophies` must `ZADD` it afterwards (`dashboard.Leaderboard.Set`); the API falls back to Postgres when the set is empty or Redis is down | none |
+| `leaderboard` | ZSET: member = user ID, score = trophies. The dashboard reads it; `POST /api/cases/{id}/accuse` `ZINCRBY`s it by the exact trophy change after the Postgres commit (best effort) | none |
+| `leaderboard:synced` | Marker: the ZSET was rebuilt from Postgres (top 1000) within the last 5 minutes. Without it the next dashboard leaderboard read serves Postgres and rebuilds the set | 5 min |
 | `user:coins:{user_id}` | cache of `users.token_balance`; filled on read, deleted on every change | 1 hour |
 | `queue:email:outbound` | list of email jobs `{to, otp, type}` (API publishes, worker consumes) | none |
 | `queue:email:dlq` | emails that failed permanently or ran out of retries | none |

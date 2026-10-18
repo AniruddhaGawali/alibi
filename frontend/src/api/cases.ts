@@ -17,6 +17,18 @@ export interface Briefing {
   difficulty_level: Difficulty
   reward_trophies: number
   scenes: Scene[]
+  /** How many hints the case has, how many this player revealed, and the text of those only. */
+  hints_total: number
+  hints_used: number
+  hints: string[]
+}
+
+/** POST /api/cases/{id}/hints. `number` is the hint's position and what it costs if the case is solved. */
+export interface RevealedHint {
+  hint: string
+  number: number
+  cost: number
+  hints_total: number
 }
 
 /** GET /api/cases/{id}/suspects. The server never sends who the culprit is. */
@@ -54,6 +66,21 @@ export interface AddNoteInput {
   chatMessageId?: string
 }
 
+/** POST /api/cases/{id}/accuse: the settled outcome. The culprit is revealed only now that the case is closed. */
+export interface AccusationOutcome {
+  correct: boolean
+  /** The player's trophy balance after the settlement. */
+  trophies: number
+  /** What the balance really moved by (negative for a loss, and a loss stops at zero). */
+  trophies_change: number
+  culprit_id: string
+  culprit_name: string
+  /** The full truth of the crime. */
+  resolution: string
+  /** What the revealed hints took off the reward (only when the case was solved). */
+  hint_penalty: number
+}
+
 export const casesApi = createApi({
   name: 'cases',
   endpoints: (build) => ({
@@ -64,6 +91,11 @@ export const casesApi = createApi({
     getSuspects: build.query<Suspect[], string>({
       query: (id) => `/api/cases/${id}/suspects`,
       providesTags: (_result, id) => [{ type: 'Cases', id }],
+    }),
+    // 404 while the case is still open: the solution is never sent early
+    getResult: build.query<AccusationOutcome, string>({
+      query: (id) => `/api/cases/${id}/result`,
+      providesTags: (_result, id) => [{ type: 'Result', id }],
     }),
     getNotes: build.query<CaseNoteItem[], string>({
       query: (id) => `/api/cases/${id}/notes`,
@@ -81,6 +113,20 @@ export const casesApi = createApi({
       query: ({ caseId, noteId }) => ({ url: `/api/cases/${caseId}/notes/${noteId}`, method: 'DELETE' }),
       invalidatesTags: (_result, arg) => [{ type: 'Notes', id: arg.caseId }],
     }),
+    // nothing is charged now: hint n takes n trophies off the reward if the case is solved
+    revealHint: build.mutation<RevealedHint, string>({
+      query: (caseId) => ({ url: `/api/cases/${caseId}/hints`, method: 'POST' }),
+      invalidatesTags: (_result, caseId) => [{ type: 'Cases', id: caseId }],
+    }),
+    accuse: build.mutation<AccusationOutcome, { caseId: string; suspectId: string }>({
+      query: ({ caseId, suspectId }) => ({
+        url: `/api/cases/${caseId}/accuse`,
+        method: 'POST',
+        body: { suspect_id: suspectId },
+      }),
+      // the lock is gone and the trophies moved: stats, the profile, the leaderboard and the case view change
+      invalidatesTags: (_result, arg) => ['Stats', 'User', 'Leaderboard', 'Stories', 'Cases', { type: 'Result', id: arg.caseId }],
+    }),
     startCase: build.mutation<CaseLock, string>({
       query: (id) => ({ url: `/api/cases/${id}/start`, method: 'POST' }),
       // the dashboard's active-case banner and stats depend on the lock
@@ -92,8 +138,11 @@ export const casesApi = createApi({
 export const {
   useGetBriefingQuery,
   useGetSuspectsQuery,
+  useGetResultQuery,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,
   useStartCaseMutation,
+  useRevealHintMutation,
+  useAccuseMutation,
 } = casesApi

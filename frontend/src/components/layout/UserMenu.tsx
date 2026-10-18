@@ -22,6 +22,7 @@ export default function UserMenu() {
   const { logout, isPending: loggingOut } = useLogout()
   const { data: stats } = useGetStatsQuery(undefined, { refetchInterval: STATS_POLL_MS })
   const tokens = useGameStore((s) => s.tokenBalance)
+  const trophies = useGameStore((s) => s.trophies)
 
   if (isError && !user) {
     // The profile failed to load: never leave the user without a way out.
@@ -68,7 +69,7 @@ export default function UserMenu() {
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Trophies</span>
-            <span className="text-gold">{stats?.trophies ?? user.trophies}</span>
+            <span className="text-gold">{trophies ?? stats?.trophies ?? user.trophies}</span>
           </div>
         </div>
         <DropdownMenuSeparator />

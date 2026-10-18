@@ -116,6 +116,18 @@ sqlc.yaml, Makefile
 
 **Before finishing any change under `backend/sql/`:** `make sqlc`, then `make sqlc-diff` must report nothing, then commit the generated `internal/db/dbgen/` together with the SQL.
 
+## Closed cases
+
+A case is played once. The accusation transaction inserts a `case_results` row; `LockUserToCase` refuses a closed case (`cases.ErrClosed`, 409 on start), `GET /api/cases/{id}/result` returns the caller's verdict plus the solution (404 while the case is open, so the solution never leaks early), and `GET /api/dashboard/stories` carries each story's `outcome` (`solved`, `failed` or null) for the caller.
+
+## Hints
+
+`stories.hints` holds up to 3 admin-set strings (`hints` on `POST`/`PATCH /api/admin/cases`; `[]` clears). They are server-only: `GetCaseBriefing` selects only `cardinality(hints)`, and the briefing returns just the caller's already revealed ones (`hints_used`, `hints`, plus `hints_total`). `POST /api/cases/{id}/hints` reveals the next one with a single guarded `UPDATE` on `active_case_locks.hints_used` (403 not in the case, 400 none left; nothing is charged then). Hint n costs n trophies (1, 3, 6 in total, `accusation.HintPenalty`), taken off `reward_trophies` only on a win and never below 0; a loss costs just `penalty_trophies`. Never select `stories.hints` for a client response.
+
+## Leaderboard: Redis set, Postgres truth
+
+`GET /api/dashboard/leaderboard` reads the Redis sorted set `leaderboard` (member = user id, score = trophies; `dashboard.RedisBoard`). `POST /api/cases/{id}/accuse` moves it with `ZINCRBY` by the exact trophy change after the Postgres commit (best effort, never fails the request). The set is trusted only while `leaderboard:synced` exists (5 min TTL): when it is missing (first read, expiry, flushed or unreachable Redis) the same dashboard read serves the top players from Postgres and rebuilds the set from it, which also repairs drift. Anything else that changes `users.trophies` must `ZINCRBY` it too.
+
 ## Auth in handlers
 
 - **Every route requires a valid JWT by default.** `auth.Middleware` (installed in `cmd/api/main.go` inside `middleware.Logging`) runs before the mux: it answers 401 for a missing, malformed, expired, forged, wrong-type (refresh) or blacklisted access token and 503 if the blacklist cannot be checked, and only then passes the request on with the claims in the context. Handlers never re-check the token; read the caller with `auth.UserID(r.Context())`.

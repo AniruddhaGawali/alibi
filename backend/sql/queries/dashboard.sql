@@ -1,9 +1,12 @@
 -- name: ListStories :many
--- Metadata for the dashboard cards, newest first.
-SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies
-FROM stories
-WHERE is_published
-ORDER BY created_at DESC, id;
+-- Metadata for the dashboard cards, newest first, with how the caller's own
+-- attempt ended ('' = not closed yet).
+SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
+       CASE WHEN r.user_id IS NULL THEN '' WHEN r.correct THEN 'solved' ELSE 'failed' END::text AS outcome
+FROM stories s
+LEFT JOIN case_results r ON r.story_id = s.id AND r.user_id = @user_id
+WHERE s.is_published
+ORDER BY s.created_at DESC, s.id;
 
 -- name: GetUserStats :one
 SELECT trophies, cases_solved FROM users WHERE id = @id;
@@ -29,6 +32,6 @@ FROM active_case_locks l
 JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = @user_id;
 
--- name: ReleaseCaseLock :execrows
--- Frees the user when the case is finished (called by the accusation flow, Phase 5).
-DELETE FROM active_case_locks WHERE user_id = @user_id AND case_id = @case_id;
+-- name: UsernamesByIDs :many
+-- Display names for the ids the Redis leaderboard returned.
+SELECT id, username FROM users WHERE id = ANY(@ids::uuid[]);

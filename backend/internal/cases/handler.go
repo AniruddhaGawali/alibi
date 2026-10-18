@@ -81,7 +81,7 @@ func (h *Handler) Briefing(w http.ResponseWriter, r *http.Request) {
 	if !h.allowed(w, r, uid, id) {
 		return
 	}
-	b, err := h.store.Briefing(r.Context(), id)
+	b, err := h.store.Briefing(r.Context(), uid, id)
 	if errors.Is(err, ErrNotFound) {
 		utils.ErrorResponse(w, http.StatusNotFound, "case not found", nil)
 		return
@@ -92,6 +92,29 @@ func (h *Handler) Briefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.SuccessResponse(w, http.StatusOK, b)
+}
+
+// Hints handles POST /api/cases/{id}/hints: reveals the player's next hint. Nothing is
+// charged now: hint n takes n trophies off the reward if they solve the case.
+func (h *Handler) Hints(w http.ResponseWriter, r *http.Request) {
+	id, ok := caseID(w, r)
+	if !ok {
+		return
+	}
+	uid := h.userID(r.Context())
+	hint, err := h.store.RevealHint(r.Context(), uid, id)
+	switch {
+	case errors.Is(err, ErrNotLocked):
+		utils.ErrorResponse(w, http.StatusForbidden, "You are not investigating this case", nil)
+	case errors.Is(err, ErrNoHints):
+		utils.ErrorResponse(w, http.StatusBadRequest, "No hints remaining", nil)
+	case err != nil:
+		utils.LogErrorCtx(r.Context(), "reveal hint failed", "user_id", uid, "case_id", id, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not reveal a hint", nil)
+	default:
+		utils.LogInfoCtx(r.Context(), "hint revealed", "user_id", uid, "case_id", id, "hint", hint.Number)
+		utils.SuccessResponse(w, http.StatusOK, hint)
+	}
 }
 
 // Suspects handles GET /api/cases/{id}/suspects.
@@ -133,6 +156,8 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrLockedElsewhere):
 		utils.LogInfoCtx(r.Context(), "case start refused: another case is active", "user_id", uid, "story_id", id)
 		utils.ErrorResponse(w, http.StatusBadRequest, "Finish your active case first", nil)
+	case errors.Is(err, ErrClosed):
+		utils.ErrorResponse(w, http.StatusConflict, "You have already closed this case", nil)
 	case errors.Is(err, ErrUserGone):
 		utils.ErrorResponse(w, http.StatusUnauthorized, "unauthorized", nil)
 	case err != nil:
@@ -142,6 +167,28 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		utils.LogInfoCtx(r.Context(), "case started", "user_id", uid, "story_id", id, "case_id", lock.CaseID)
 		utils.SuccessResponse(w, http.StatusOK, lock)
 	}
+}
+
+// Result handles GET /api/cases/{id}/result: the caller's own settled accusation with
+// the truth of the crime. 404 while the case is still open to them, so the solution
+// cannot be read early.
+func (h *Handler) Result(w http.ResponseWriter, r *http.Request) {
+	id, ok := caseID(w, r)
+	if !ok {
+		return
+	}
+	uid := h.userID(r.Context())
+	res, err := h.store.Result(r.Context(), uid, id)
+	if errors.Is(err, ErrNotFound) {
+		utils.ErrorResponse(w, http.StatusNotFound, "case not closed", nil)
+		return
+	}
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "load case result failed", "user_id", uid, "case_id", id, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the result", nil)
+		return
+	}
+	utils.SuccessResponse(w, http.StatusOK, res)
 }
 
 type noteIDParam struct {

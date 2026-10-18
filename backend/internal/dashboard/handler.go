@@ -12,6 +12,12 @@ import (
 // leaderboardSize is how many players the leaderboard shows.
 const leaderboardSize = 10
 
+// WithBoard makes the leaderboard come from Redis, rebuilt from Postgres when stale.
+func (h *Handler) WithBoard(b Board) *Handler {
+	h.board = b
+	return h
+}
+
 // Balancer reads the live token balance; *wallet.Service implements it.
 type Balancer interface {
 	Balance(ctx context.Context, userID string) (int64, error)
@@ -21,6 +27,7 @@ type Handler struct {
 	store   Store
 	balance Balancer
 	userID  func(context.Context) string // auth.UserID in production
+	board   Board                        // Redis leaderboard; nil reads Postgres only
 }
 
 func NewHandler(store Store, balance Balancer, userID func(context.Context) string) *Handler {
@@ -50,7 +57,7 @@ type activeCaseResp struct {
 
 // Stories handles GET /api/dashboard/stories.
 func (h *Handler) Stories(w http.ResponseWriter, r *http.Request) {
-	stories, err := h.store.ListStories(r.Context())
+	stories, err := h.store.ListStories(r.Context(), h.userID(r.Context()))
 	if err != nil {
 		utils.LogErrorCtx(r.Context(), "list stories failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load stories", nil)
@@ -88,11 +95,14 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	utils.SuccessResponse(w, http.StatusOK, resp)
 }
 
-// Leaderboard handles GET /api/dashboard/leaderboard: the top players by
-// trophies, read from Postgres (users_trophies_rank_idx makes this an index scan).
+// Leaderboard handles GET /api/dashboard/leaderboard: the top players by trophies.
+// They come from the Redis sorted set while it is in sync with Postgres. When it
+// is not (first read, expired, Redis down) they come from Postgres
+// (users_trophies_rank_idx makes that an index scan) and the same read rebuilds
+// the set, so Redis is refreshed from the database as the dashboard is used.
 func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
 	ctx, uid := r.Context(), h.userID(r.Context())
-	players, err := h.store.TopPlayers(ctx, leaderboardSize)
+	players, err := h.topPlayers(ctx)
 	if err != nil {
 		utils.LogErrorCtx(ctx, "leaderboard read failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the leaderboard", nil)
@@ -103,6 +113,54 @@ func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
 		out = append(out, rankedPlayer{Rank: i + 1, Username: p.Username, Trophies: p.Trophies, IsMe: p.ID == uid})
 	}
 	utils.SuccessResponse(w, http.StatusOK, out)
+}
+
+func (h *Handler) topPlayers(ctx context.Context) ([]Player, error) {
+	if h.board != nil {
+		entries, synced, err := h.board.Top(ctx, leaderboardSize)
+		if err != nil {
+			utils.LogWarnCtx(ctx, "redis leaderboard read failed, using postgres", "err", err)
+		} else if synced {
+			if players, err := h.named(ctx, entries); err == nil {
+				return players, nil
+			} else {
+				utils.LogWarnCtx(ctx, "leaderboard names failed, using postgres", "err", err)
+			}
+		}
+	}
+	if h.board == nil {
+		return h.store.TopPlayers(ctx, leaderboardSize)
+	}
+	all, err := h.store.TopPlayers(ctx, RebuildSize)
+	if err != nil {
+		return nil, err
+	}
+	if err := h.board.Rebuild(ctx, all); err != nil {
+		utils.LogWarnCtx(ctx, "leaderboard rebuild failed", "err", err)
+	}
+	return all[:min(len(all), leaderboardSize)], nil
+}
+
+// named adds usernames to Redis entries, dropping players that no longer exist.
+func (h *Handler) named(ctx context.Context, entries []Entry) ([]Player, error) {
+	if len(entries) == 0 {
+		return []Player{}, nil
+	}
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.ID
+	}
+	names, err := h.store.Usernames(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Player, 0, len(entries))
+	for _, e := range entries {
+		if name, ok := names[e.ID]; ok {
+			out = append(out, Player{ID: e.ID, Username: name, Trophies: e.Trophies})
+		}
+	}
+	return out, nil
 }
 
 // ActiveCase handles GET /api/dashboard/active-case. case_id (and the story's
