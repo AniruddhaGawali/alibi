@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -28,6 +29,11 @@ type Policy struct {
 	AuthIPMax    int
 	AuthIPWindow time.Duration
 
+	// SignupIPDailyMax accounts created per IP per 24 h. Together with the
+	// canonical email in the OTP keys it stops "me+1@gmail.com, me+2@..." from
+	// minting accounts, each with its own daily question tokens.
+	SignupIPDailyMax int
+
 	// Login lockout: after LoginMaxFailures wrong passwords for one email (or
 	// LoginIPMaxFailures from one IP) further attempts are refused for
 	// LoginLockBase, doubling with each extra failure up to LoginLockCap.
@@ -38,6 +44,9 @@ type Policy struct {
 }
 
 func (p Policy) withDefaults() Policy {
+	if p.SignupIPDailyMax <= 0 {
+		p.SignupIPDailyMax = 10
+	}
 	if p.AuthIPMax <= 0 {
 		p.AuthIPMax = 60
 	}
@@ -111,9 +120,28 @@ func NewLimiter(rdb *redis.Client, p Policy) *Limiter { return &Limiter{rdb: rdb
 
 func (l *Limiter) Cooldown() time.Duration { return l.p.Cooldown }
 
-func emailLimitKey(email string) string { return "ratelimit:otp:email:" + email }
-func emailDailyKey(email string) string { return "ratelimit:otpdaily:email:" + email }
-func ipLimitKey(ip string) string       { return "ratelimit:otp:ip:" + ip }
+func emailLimitKey(email string) string { return "ratelimit:otp:email:" + canonicalEmail(email) }
+func emailDailyKey(email string) string { return "ratelimit:otpdaily:email:" + canonicalEmail(email) }
+
+// canonicalEmail is the mailbox an address really delivers to, for rate limits
+// only (accounts keep the address as typed): lower case, without a "+tag" and, for
+// Gmail, without dots, so me+1@gmail.com and m.e@gmail.com share me@gmail.com's budget.
+func canonicalEmail(email string) string {
+	email = strings.ToLower(strings.TrimSpace(email))
+	at := strings.LastIndexByte(email, '@')
+	if at < 1 {
+		return email
+	}
+	local, domain := email[:at], email[at+1:]
+	if i := strings.IndexByte(local, '+'); i > 0 {
+		local = local[:i]
+	}
+	if domain == "gmail.com" || domain == "googlemail.com" {
+		local, domain = strings.ReplaceAll(local, ".", ""), "gmail.com"
+	}
+	return local + "@" + domain
+}
+func ipLimitKey(ip string) string { return "ratelimit:otp:ip:" + ip }
 
 func (l *Limiter) keys(email, ip string) []string {
 	return []string{emailLimitKey(email), emailDailyKey(email), ipLimitKey(ip)}
@@ -166,6 +194,20 @@ func ceilSeconds(ms int64) time.Duration {
 func (l *Limiter) HitIP(ctx context.Context, scope, ip string) (time.Duration, error) {
 	ms, err := hitScript.Run(ctx, l.rdb, []string{"ratelimit:authip:" + scope + ":" + ip},
 		l.p.AuthIPMax, int(l.p.AuthIPWindow.Seconds())).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("auth: rate limit: %w", err)
+	}
+	if ms <= 0 {
+		return 0, nil
+	}
+	return ceilSeconds(ms), nil
+}
+
+// HitSignup charges one new account to ip's daily budget and returns how long to
+// wait when it is spent (0 = proceed).
+func (l *Limiter) HitSignup(ctx context.Context, ip string) (time.Duration, error) {
+	ms, err := hitScript.Run(ctx, l.rdb, []string{"ratelimit:signup:ip:" + ip},
+		l.p.SignupIPDailyMax, int(dailyWindow.Seconds())).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("auth: rate limit: %w", err)
 	}

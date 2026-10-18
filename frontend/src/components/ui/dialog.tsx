@@ -1,11 +1,9 @@
-"use client"
-
 import * as React from "react"
 import { cn } from "cn"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
-import { XIcon } from "lucide-react"
+import { RiCloseLine } from "@remixicon/react"
 
 function Dialog({
   ...props
@@ -74,7 +72,7 @@ function DialogContent({
               className="absolute top-2 right-2"
               size="icon-sm"
             >
-              <XIcon
+              <RiCloseLine
               />
               <span className="sr-only">Close</span>
             </Button>

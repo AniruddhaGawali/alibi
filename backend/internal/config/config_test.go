@@ -2,7 +2,10 @@ package config
 
 import (
 	"net"
+	"strings"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 func TestEnvIntFallsBackOnInvalid(t *testing.T) {
@@ -63,6 +66,76 @@ func TestDefaultTrustedProxiesAreLoopbackOnly(t *testing.T) {
 			if n.Contains(net.ParseIP(ip)) {
 				t.Errorf("%s must not be trusted by default (Docker gateway / private ranges)", ip)
 			}
+		}
+	}
+}
+
+func TestEnvFilesSearchParentDirectories(t *testing.T) {
+	got := envFiles()
+	want := []string{".env", "../.env", "../../.env", "../../../.env"} // cwd + 3 parents: backend/cmd/<name> reaches the repo root
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCheckSupabase(t *testing.T) {
+	ok := []Config{
+		{}, // not configured: uploads disabled, not an error
+		{SupabaseURL: "https://abc.supabase.co", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "http://localhost:54321", SupabaseServiceRoleKey: "k"},
+	}
+	for _, c := range ok {
+		if err := checkSupabase(&c); err != nil {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	bad := []Config{
+		{SupabaseURL: "https://abc.supabase.co"}, // key missing
+		{SupabaseURL: "abc.supabase.co", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "ftp://abc", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "http://abc.supabase.co", SupabaseServiceRoleKey: "k"}, // key would travel in clear text
+	}
+	for _, c := range bad {
+		if err := checkSupabase(&c); err == nil {
+			t.Errorf("%+v: want error", c)
+		}
+	}
+}
+
+// Copying .env.example to .env must give a working config: no value may carry an
+// inline "# comment" (godotenv would keep it as part of the value), and the
+// secret must be left blank so nobody runs with a key that is in git.
+func TestEnvExampleIsSafeToCopy(t *testing.T) {
+	vars, err := godotenv.Read("../../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range vars {
+		if strings.Contains(v, "#") {
+			t.Errorf("%s=%q has an inline comment; put comments on their own line", k, v)
+		}
+	}
+	if vars["JWT_SECRET"] != "" {
+		t.Errorf("JWT_SECRET must be blank in .env.example")
+	}
+	if err := checkSupabase(&Config{SupabaseURL: vars["SUPABASE_URL"], SupabaseServiceRoleKey: vars["SUPABASE_SERVICE_ROLE_KEY"]}); err != nil {
+		t.Errorf("example Supabase settings rejected: %v", err)
+	}
+}
+
+func TestAPIKeyIgnoresACommentThatBecameTheValue(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                 "",
+		"  sk-or-v1-abc  ": "sk-or-v1-abc",
+		"# interrogations; without it the endpoint answers 503": "",
+	} {
+		if got := apiKey(in); got != want {
+			t.Errorf("apiKey(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

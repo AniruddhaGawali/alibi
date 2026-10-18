@@ -22,20 +22,27 @@ go install github.com/pressly/goose/v3/cmd/goose@latest
 | Add or change a query | edit a file in `sql/queries/`, then `make sqlc` |
 | Check generated code is current (CI) | `make sqlc-diff` |
 | Roll back / inspect | `make migrate-down`, `make migrate-status` |
+| Load dev test data (stories, leaderboard users) | `make seed-dev` (docker-compose DB only; see `sql/seed/`, never a migration) |
 
 `make migrate-*` use `POSTGRES_URI` from the repo-root `.env`. The API also runs pending migrations at startup unless `MIGRATE_ON_START=false`.
 
 Rules:
 - Never edit a migration that has shipped; add a new numbered one.
 - Never write SQL strings in Go. Add a named query and call `dbgen.Queries`.
-- List columns explicitly when a table has large ones. (Avatar bytes live in their own table so `SELECT * FROM users` is safe.)
+- List columns explicitly when a table has large ones. (Images are never stored in Postgres: they live in the object store, see `internal/storage`.)
 
 ## Migrations
 
 | File | What it does |
 |---|---|
 | `00001_create_users.sql` | `users`: credentials, default avatar, trophies, `token_balance` (source of truth, CHECK >= 0), case-insensitive unique email/username |
-| `00002_create_user_avatars.sql` | `user_avatars`: custom avatar JPEG as `BYTEA`, one row per user |
+| `00002_create_user_avatars.sql` | `user_avatars`: custom avatar JPEG as `BYTEA` (dropped by 00008) |
+| `00005_create_stories.sql` | `stories`: crime story card metadata (title, synopsis, thumbnail, `easy`/`medium`/`hard`, trophy and token rewards); only `is_published` rows reach the dashboard |
+| `00006_create_active_case_locks.sql` | `active_case_locks`: one row per user inside an unfinished case (the primary key on `user_id` is the lock) |
+| `00007_add_users_cases_solved.sql` | `users.cases_solved`: how many cases the player has solved (CHECK >= 0); whatever finishes a case increments it |
+| `00008_avatars_in_object_storage.sql` | custom avatars move to the object store: `users.avatar_url` (public URL) + `avatar_path` (object path, for deleting a replaced image); drops `user_avatars` and `avatar_updated_at` |
+| `00009_create_case_briefing.sql` | `stories.main_plot`; `case_scenes` (image URL + display order, per case); `suspects` (role, avatar, initial testimony, server-only `is_culprit`, at most one culprit per case) |
+| `00010_create_case_notes.sql` | `case_notes`: a player's private notes per case, optionally about a suspect (`ON DELETE SET NULL`), body 1-1000 chars |
 
 There are no custom SQL functions or stored procedures; `gen_random_uuid()` is built into PostgreSQL 13+. The `alibi` database itself is created by `docker-compose.yml`.
 
@@ -44,7 +51,10 @@ There are no custom SQL functions or stored procedures; `gen_random_uuid()` is b
 | File | Query | Purpose |
 |---|---|---|
 | `users.sql` | `CreateUser` (with starting `token_balance`), `GetUserByEmail`, `GetUserByID`, `CheckAvailability` | OTP verification creates the user; login; profile; signup checks email/username are free before sending an OTP |
-| `avatars.sql` | `SetDefaultAvatar`, `SetCustomAvatar`, `GetAvatar` | choose a default avatar (deletes the custom image), store/replace the custom image, serve it |
+| `avatars.sql` | `SetDefaultAvatar`, `SetCustomAvatar` | switch between a default avatar and an uploaded image; both return the replaced image's object path so it can be deleted from storage |
+| `cases.sql` | `GetCaseBriefing`, `ListCaseScenes`, `ListCaseSuspects` (explicit columns, no `is_culprit`), `GetUserLock`, `CaseIsPublished` | the case briefing endpoints and starting a case (uses `LockUserToCase`) |
+| `notes.sql` | `ListCaseNotes`, `CreateCaseNote` (refuses past the per-case cap), `SuspectInCase`, `DeleteCaseNote` (owner only) | the player's case notes |
+| `dashboard.sql` | `ListStories`, `GetUserStats`, `GetUsernames`, `TopPlayers`, `GetActiveCase` (with the story title), `LockUserToCase`, `ReleaseCaseLock` | dashboard stories, stats, leaderboard (and its Postgres fallback) and the active-case lock |
 | `wallet.sql` | `GetTokenBalance`, `AdjustTokenBalance` | read the balance; atomic grant/spend that cannot go below zero |
 
 ## Redis keys (not SQL, listed for completeness)
@@ -57,6 +67,7 @@ There are no custom SQL functions or stored procedures; `gen_random_uuid()` is b
 | `ratelimit:otpdaily:email:{email}` | counter; at most 5 codes per email per day | 24 h |
 | `ratelimit:otp:ip:{ip}` | counter; at most 10 codes per client IP per window | 15 min |
 | `blacklist:jwt:{jti}` | `true`; logged-out access and refresh tokens | remaining lifetime of that token |
+| `leaderboard:trophies` | ZSET: member = user ID, score = trophies. Whatever changes `users.trophies` must `ZADD` it afterwards (`dashboard.Leaderboard.Set`); the API falls back to Postgres when the set is empty or Redis is down | none |
 | `user:coins:{user_id}` | cache of `users.token_balance`; filled on read, deleted on every change | 1 hour |
 | `queue:email:outbound` | list of email jobs `{to, otp, type}` (API publishes, worker consumes) | none |
 | `queue:email:dlq` | emails that failed permanently or ran out of retries | none |

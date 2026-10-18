@@ -65,16 +65,9 @@ func (f *fakeStore) GetByID(_ context.Context, id string) (*user.User, error) {
 	return nil, user.ErrNotFound
 }
 
-func (f *fakeStore) SetAvatarDefault(context.Context, string, int) error { return nil }
-func (f *fakeStore) SetAvatarCustom(context.Context, string, []byte) (time.Time, error) {
-	return time.Now(), nil
-}
-func (f *fakeStore) GetAvatar(context.Context, string) ([]byte, time.Time, error) {
-	return nil, time.Time{}, user.ErrNotFound
-}
-
-func (f *fakeStore) AvatarUpdatedAt(context.Context, string) (time.Time, error) {
-	return time.Time{}, user.ErrNotFound
+func (f *fakeStore) SetAvatarDefault(context.Context, string, int) (string, error) { return "", nil }
+func (f *fakeStore) SetAvatarCustom(context.Context, string, string, string) (string, error) {
+	return "", nil
 }
 
 // fakeMail records published email jobs; fail makes Publish error.

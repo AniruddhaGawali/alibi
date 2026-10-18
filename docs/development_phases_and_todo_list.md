@@ -34,7 +34,9 @@
 - [x] Dual-layer OTP rate limiting in Redis (429 + `Retry-After`): per email a 60 s cooldown and 5 codes/day; per client IP 10 codes per 15 min (so shared networks still work); wrong-code attempt cap; trusted-proxy aware client IP.
 - [x] Auth abuse hardening (PR #2 review): atomic wrong-OTP cap and HMAC-only code storage, per-IP budget before DB/bcrypt work, login lockout with exponential backoff + bcrypt concurrency bound, IPv6 /64 keys, loopback-only default `TRUSTED_PROXIES`, avatar decode/upload limits and conditional avatar GETs, migration advisory lock, BIGINT token balance, least-privilege compose env + healthchecks. See `backend/README.md`.
 - [ ] Bot protection (Cloudflare Turnstile / hCaptcha) on signup and resend-otp (needs a frontend widget and a secret key).
-- [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized/compressed, stored as `bytea`; `GET /api/user/avatars/{id}`).
+- [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized to 256x256 WebP and uploaded to object storage; the profile returns its public URL).
+- [x] Image storage behind `storage.Provider` (`internal/storage`), Supabase Storage for now (swappable for S3/GCS), WebP only; `make assets-upload` for manual case/avatar art until the admin panel exists.
+- [x] Supabase project + public bucket `alibi-assets` set up, `SUPABASE_*` in `.env`, `VITE_ASSET_BASE_URL` in `frontend/.env.local`; case and avatar art uploaded with `make assets-upload`, local copies removed from `frontend/public`.
 - [x] Token balance: Postgres is the source of truth, Redis `user:coins:<id>` is the cache (`wallet` service).
 - [x] Database workflow: goose migrations + sqlc type-safe queries (`backend/sql`).
 
@@ -49,78 +51,89 @@
 - [ ] Create the actual alert on `dlq_depth > 0` in the log/ClickHouse tooling, and set the real Brevo credentials and verified sender in production.
 
 ### P1.2 Auth Frontend (React)
-- [ ] Build the Signup form (Email/Username/Password) and direct Google Login button.
-- [ ] Build the OTP verification screen.
-- [ ] Build the Login screen for returning users.
-- [ ] Build the Avatar Selection UI for the onboarding flow.
+- [x] Build the Signup form (Email/Username/Password) and a Google Login button (placeholder; backend Google login is still open).
+- [x] Build the OTP verification screen (shadcn `InputOTP`, resend code).
+- [x] Build the Login screen for returning users.
+- [x] Build the Avatar Selection UI for the onboarding flow (1 MB client-side check, 4 placeholder defaults).
 
 ### P1.3 Auth Integration
-- [ ] Connect frontend auth forms to the Go backend.
-- [ ] Handle routing post-login (redirect to Dashboard).
+- [x] Connect frontend auth forms to the Go backend (`src/api/auth.ts`, `user.ts`; tokens, `pending_otp_email` and `user_data` in cookies). Not yet exercised against a running backend.
+- [x] Handle routing post-login (redirect to Dashboard).
 - [x] Implement logic to automatically allocate the initial 10 question tokens to the user's wallet upon completing onboarding. (Backend: allocated when the OTP is verified; frontend just displays it.)
-- [ ] Connect the frontend logout button to the backend Redis Blacklist endpoint.
+- [x] Connect the frontend logout button to the backend Redis Blacklist endpoint.
 
 ---
 
 ## Phase 2: The Home Page & Case Selection (P2)
 
 ### P2.1 Dashboard Backend (Go)
-- [ ] Create API endpoint to fetch available crime stories from PostgreSQL.
-- [ ] Create API endpoint to fetch the user's current token balance and total trophies.
-- [ ] Create API endpoint to fetch the top players from the Redis Leaderboard (ZSET).
-- [ ] Implement "Active Case Lock" logic to verify if a user is currently locked into an unfinished case.
+- [x] Create API endpoint to fetch available crime stories from PostgreSQL.
+- [x] Create API endpoint to fetch the user's current token balance and total trophies.
+- [x] Create API endpoint to fetch the top players (`GET /api/dashboard/leaderboard`, read from Postgres through `users_trophies_rank_idx`; rows carry `is_me`, not user ids). A Redis ZSET can come back in Phase 5 if it is maintained and backfilled wherever trophies change.
+- [x] Implement "Active Case Lock" logic to verify if a user is currently locked into an unfinished case.
 
 ### P2.2 Dashboard Frontend (React)
-- [ ] Build Crime Story Cards displaying synopsis, title, difficulty, and rewards.
-- [ ] Build the live Token Balance and Trophies display component.
-- [ ] Build the Global Leaderboard component.
+- [x] Build Crime Story Cards displaying synopsis, title, difficulty, and rewards.
+- [x] Build the live Token Balance and Trophies display component.
+- [x] Build the Global Leaderboard component.
 
 ### P2.3 Case Selection Integration
-- [ ] Connect the dashboard UI to fetch live data from the backend using React Query.
-- [ ] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active).
+- [x] Connect the dashboard UI to fetch live data from the backend using React Query.
+- [x] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active). The active story id comes from `GET /api/dashboard/stats` (`active_story_id`): that card shows Continue, the rest are Locked (redacted, CLASSIFIED stamp, no button).
 
 ---
 
 ## Phase 3: The Story and Briefing Page (P3)
 
 ### P3.1 Briefing Backend (Go)
-- [ ] Create API endpoint to fetch the specific active case's main plot and scene images.
-- [ ] Create API endpoint to fetch all suspect avatars and their initial testimonies for the active case.
+- [x] Create API endpoint to fetch the specific active case's main plot and scene images. (`GET /api/cases/{id}/briefing`; case = a `stories` row with `main_plot` and `case_scenes`.)
+- [x] Create API endpoint to fetch all suspect avatars and their initial testimonies for the active case. (`GET /api/cases/{id}/suspects`; `is_culprit` is never selected.)
+- [x] Start a case: `POST /api/cases/{id}/start` takes the Active Case Lock (400 "Finish your active case first" if locked into another case; idempotent for the same case). The dashboard Start / Continue buttons call it and open `/case/:id`.
+- [x] Case #01 seeded (plot, 3 scenes, 4 suspects, Beatrice as culprit) in `backend/sql/seed/dev_seed.sql`; testimonies are drafts to review.
 
 ### P3.2 Briefing Frontend (React)
-- [ ] Build the Story Dashboard UI to render the main plot and visuals.
-- [ ] Build interactive Suspect Avatar components that display initial testimonies in a tooltip on hover.
-- [ ] Build the detailed Testimony Modal/View that opens on click, containing the "Chat" button.
+- [x] Build the Story Dashboard UI to render the main plot and visuals. (`/case/:id`: title, framed scene gallery beside the letter-shaped case file.)
+- [x] Suspect cards in a horizontal carousel show avatar, name, role and the initial testimony on the card; hovering the portrait also shows the testimony in a tooltip.
+- [x] Chat button on each suspect card opens the floating chat window (Zustand `useChatStore`) with that suspect pre-selected; the window shows the suspect's details and a placeholder where messages go in P3.3.
 
 ### P3.3 Chat History UI (React)
-- [ ] Build the global chat history section on the main story dashboard.
-- [ ] Implement filtering logic so clicking a specific character shows only their chat previews.
+- [x] Build the global chat history section on the main story dashboard. (`ChatHistorySection` reads the stored exchanges through `GET /api/chat/{case_id}/{suspect_id}`, one request per suspect, via `useCaseChatHistory` in `src/api/chat.ts`.)
+- [x] Implement filtering logic so clicking a specific character shows only their chat previews. (Filter pills, and clicking a suspect card filters and scrolls to the logs; `selectedSuspectFilter` in `useGameStore`.)
+- [x] Detective's notes live inside the interrogation log (`NoteComposer` + `NoteCard`): an "Add a note" box above the logs, and notes appear in the same scrolling stream as the logs, newest first.
+- [x] Case notes are saved to the player's account: `case_notes` table (migration 00010) and `GET/POST /api/cases/{id}/notes`, `DELETE /api/cases/{id}/notes/{note_id}` (own notes only, max 1000 chars, max 200 per case), used through `createApi` hooks.
+- [x] A note can be about one suspect (`suspect_id`) or the case in general: with a suspect filter selected the note is about that suspect, under All Logs a dropdown picks who. Notes show under the matching filter.
+- [x] Tie a note to a specific interrogation log entry: "Add note" on each log card saves a note with `chat_message_id` (`case_notes.chat_message_id`, migration 00012). The API checks the entry is the caller's own, from this case, and takes the note's suspect from it; the note card quotes the question it is about.
 
 ---
 
 ## Phase 4: The Interrogation (Core Gameplay Loop) (P4)
 
 ### P4.1 LLM Backend Integration (Go)
-- [ ] Set up the LLM Microservice to connect with the Ollama/OpenRouter APIs.
-- [ ] Implement the input moderation layer to detect and block off-topic queries (e.g., code, math).
-- [ ] Build the dynamic System Prompt swapping logic based on the requested character ID (Dual-State prompting for culprits).
-- [ ] Optimize the request chain to ensure AI responses return within the 2-3 second NFR limit.
+- [x] Set up the LLM Microservice to connect with the Ollama/OpenRouter APIs. OpenRouter answers interrogations (`internal/llm`, `internal/interrogation`, `POST /api/cases/{id}/suspects/{suspect_id}/interrogate`); Ollama stays a local-only client.
+- [x] Per-case model: `stories.llm_model` (default `google/gemma-4-31b-it`), set by admins through `POST /api/admin/cases` and `PATCH /api/admin/cases/{id}` (needs `users.is_admin`). Model ids are format-checked (no `:online`, no `openrouter/*` routers) and must be text-output-only on OpenRouter.
+- [x] Text-to-text only: no tools or tool choice, web search and file parser plugins switched off, output modality `text`; tool calls, images or audio in a reply are discarded (the token is kept: the provider has already generated the reply).
+- [x] Implement the input moderation layer to detect and block off-topic queries (e.g., code, math, "bubble sort"), plus prompt-injection attempts (`llm.Moderate`; blocked questions get a fixed in-character reply and cost no token). Matching runs on a normalised copy (NFKD, accents and variation selectors dropped, Cyrillic/Greek look-alikes folded, leetspeak and spelled-out words rejoined) and knows the chat-template tokens of ChatML, Gemma, Llama and Phi. This is a speed bump, not the whole defence (NFR2.1): every blocked injection counts as a strike (`LLM_INJECTION_STRIKES_PER_HOUR`, then a lockout), each suspect reply is checked for leaked secrets (`llm.LeaksSecret`: 8 words in a row from the hidden truth or confession triggers, or quoted rules) and replaced with a fixed line, and only the questioned suspect's secrets are loaded and put in the prompt. The confession is gated on the server: each suspect has `confession_keywords` (migration 00015, groups like `last+study`); until a question (or one of the last 6) matches, the prompt holds no hidden truth, no confession triggers and no culprit flag, and every suspect gets the same neutral "you are hiding something" line, so a successful extraction reveals nothing and guilty and innocent look alike. A suspect without keywords is never gated.
+- [x] Build the dynamic System Prompt swapping logic based on the requested character ID (Dual-State prompting for culprits). Three sections: persona with public alibi / hidden truth / confession triggers, cross-character awareness (other suspects' public facts only, never their secrets), strict rules (length, stay in character, injection defence).
+- [x] Optimize the request chain to ensure AI responses return within the 2-3 second NFR limit. No SDK retries, 160-token reply cap, `LLM_TIMEOUT_SECONDS` (default 20), the lock, history and (cached) case/suspect/prompt reads run concurrently, a Redis balance check comes before any database read, the system prompts are built once per case and suspect so providers can cache their prefix, and the chat reply no longer waits for a stats refetch. Measured live against `google/gemma-4-31b-it` through OpenRouter (with `data_collection: deny`): 1.6 to 2.5 s per answer, one of five calls took 3.1 s. Streaming is a possible later improvement.
 
 ### P4.2 Token Economy Backend (Go)
-- [ ] Implement the 1-token deduction logic in Redis (DECR) executed *before* calling the LLM.
-- [ ] Implement the token refund logic (INCR) if the query is blocked by moderation or if the LLM times out.
-- [ ] Create the daily cron job (or lazy evaluation script) to reset user token balances to 10 (without rolling over unused tokens).
+- [x] Implement the 1-token deduction executed *before* calling the LLM (after moderation and a cheap balance check): `wallet.SpendQuestion` runs an atomic Redis DECR on `user:coins:<id>` that is undone straight away if it goes below zero (429 "Out of tokens"), then mirrors the spend to Postgres; on any disagreement the key is dropped and reloaded from Postgres.
+- [x] Implement the token refund logic. The model call no longer depends on the client connection (a dropped request still completes and its answer is stored), and only a failure before any answer (timeout, upstream error) is refunded (`wallet.RefundQuestion`: Postgres, then Redis INCR), at most `LLM_REFUNDS_PER_DAY` times per player per day; an unusable answer keeps the token. The API only says "refunded" when the refund worked. Moderation runs before the spend, so a blocked query never costs a token.
+- [x] Create the daily cron job to reset user token balances to 10 (without rolling over unused tokens): `internal/jobs` with robfig/cron inside the API process, `TOKEN_RESET_CRON` / `TOKEN_RESET_TIMEZONE` / `DAILY_TOKENS`. A finished day is recorded in `done:cron:token-reset:<day>` and a short in-progress lock (released when the run ends, expiring after 3 minutes if the process dies) keeps replicas from overlapping, so a crash never skips the day; a catch-up check at startup and every 10 minutes runs today's reset if it is due and missing (robfig/cron does not replay missed runs). Postgres is set to exactly 10, then the Redis balance keys are removed with UNLINK. The reset time comes from env for now; making it editable from the admin panel is P5.3.
+- [x] Protect the OpenRouter credit (`interrogation.RedisGuard`, `LLM_*` settings): a per-address and a per-player requests-per-minute limit that also counts blocked questions, one question in flight per player, a never-refunded daily model-call allowance per player (`DAILY_TOKENS` + refunds), a global concurrency cap, daily call and token budgets fed by the usage OpenRouter reports, and a circuit breaker for upstream failures (429 with `Retry-After`, or 503). Accounts are capped per address (`SIGNUP_IP_DAILY_MAX`) and the OTP limits treat `+tag` and Gmail-dot variants as one mailbox. The OpenRouter key itself has a $2 hard credit limit. Requests ask OpenRouter for providers that do not log prompts (`data_collection: deny`).
 
 ### P4.3 Chat Storage Backend (Go)
-- [ ] Configure the LLM service to asynchronously push the generated Q&A payload to the Message Queue.
-- [ ] Build the background worker (Chat Storage Microservice) to consume queue events and insert documents into MongoDB.
-- [ ] Create API endpoint to fetch historical character chats from MongoDB.
+- [x] Configure the LLM service to asynchronously push the generated Q&A payload to the Message Queue (`queue:chat:events`, `chat.Event`: user_id, case_id, suspect_id, user_query, ai_response, timestamp, plus event_id, play_id, suspect_name, model).
+- [x] Build the background worker (Chat Storage Microservice) to consume queue events and insert documents into MongoDB (`chat.Worker`, goroutines in the API process, `CHAT_WORKER_CONCURRENCY`; collection `chat_messages`, `_id` = event id so redeliveries are no-ops; retries and `queue:chat:dlq` from the broker).
+- [x] Create API endpoint to fetch historical character chats from MongoDB: `GET /api/chat/{case_id}/{suspect_id}`, the caller's own exchanges oldest first (latest 200), from the play-through they are in now (`play_id` of their case lock; a replayed case starts with a blank conversation, and the model's memory is scoped the same way). The last 6 exchanges are also fed back to the model so suspects remember the conversation.
+- [x] Exchanges that the queue refuses are retried (3 attempts, then kept in a small in-memory list and tried again with the next publish and on shutdown), and `chat.Monitor` logs the queue and DLQ depths (`chat_dlq_depth`) like the email monitor.
 
 ### P4.4 Chat Frontend (React)
-- [ ] Build the real-time chat interface (message bubbles, input field, loading states).
-- [ ] Connect the chat UI to the LLM backend via standard HTTP or WebSockets/SSE for fast delivery.
-- [ ] Integrate the visual token counter to update instantly when a message is sent (using Zustand/React Query for optimistic updates).
-- [ ] Add state logic to disable and visually block the chat input when the token balance hits zero.
+- [x] Build the real-time chat interface (message bubbles, input field, loading states): `components/chat/` (`ChatWindow`, `MessageBubble`, `ThinkingBubble`, `ChatInput`, `TokenCounter`). Detective bubbles are modern and right-aligned, suspects are aged paper in typewriter type on the left, errors are centred notices; "Suspect is thinking…" shows the moment a question is sent; the window follows new messages (`useStickToBottom`) and earlier conversation loads from `GET /api/chat/{case_id}/{suspect_id}`.
+- [x] Connect the chat UI to the LLM backend via standard HTTP: `useInterrogateMutation` (`api/chat.ts`) posts to `POST /api/cases/{id}/suspects/{suspect_id}/interrogate` (the built route, not `/api/chat`). A moderation block (422) shows the suspect's in-character brush-off; timeouts and failures show a notice; answers are added to the cached history so the chat and the case log update at once.
+- [x] Integrate the visual token counter to update instantly when a message is sent: `useGameStore.tokenBalance` is the one balance (kept in step with the server by `useSyncTokenBalance` in the layout), drops by 1 on send, is refunded on an error and set to the server's figure on success. The navbar menu, the stats panel and the chat all read it.
+- [x] Add state logic to disable and visually block the chat input when the token balance hits zero (disabled, "Out of tokens. Make your final deduction.", red border, greyed field, not-allowed cursor).
+- [x] Show testimonies and chat logs in the typewriter font (`font-typewriter`, `Typewriter` reveal): new answers type out character by character (`useTypewriter`), a click, Enter or Space skips to the full text, stored answers appear instantly.
 
 ---
 
@@ -129,7 +142,7 @@
 ### P5.1 Accusation Backend (Go)
 - [ ] Create the final accusation submission API.
 - [ ] Implement logic to evaluate the selected suspect against the true culprit in PostgreSQL.
-- [ ] Update the user's Trophies and bonus tokens in PostgreSQL.
+- [ ] Update the user's Trophies in PostgreSQL. A win pays trophies only: no bonus tokens (the `reward_tokens` column was removed in migration 00013).
 - [ ] Update the user's score in the Redis Leaderboard (ZINCRBY).
 - [ ] Unlock the user's "Active Case Lock".
 
@@ -137,7 +150,19 @@
 - [ ] Build the final Accusation UI displaying all suspect avatars for selection.
 - [ ] Build the "Submit Deduction" confirmation flow.
 - [ ] Build the Case Outcome reveal screen (Win/Loss animations, updated trophies/tokens display).
+- [ ] Stamp the outcome onto the case file with the existing `Stamp` component ("SOLVED" / "GUILTY" / "WRONG").
 
 ### P5.3 Admin Panel (Go & React)
 - [ ] **Backend:** Create secured Admin APIs to update global configurations (daily token limits, specific refresh times).
+- [ ] **Backend:** Admin image upload API for case art (thumbnails, scenes, suspects) through `storage.Provider`, replacing `make assets-upload`.
 - [ ] **Frontend:** Build a simple Admin UI dashboard to adjust these settings.
+
+---
+
+## Game UI Polish (cross-phase)
+
+- [x] Magnifying-glass cursor, fingerprint mark on button hover, gold `frame` on key panels, film grain and vignette.
+- [x] Case-file props in `components/game/`: `Tape`, `Stamp`, `Redacted`, `Typewriter`, `RedString`; applied to the dashboard story cards (redacted + CLASSIFIED stamp on locked cases).
+- [x] Sound effects (button click, paper rustle on opening a case, typewriter keys, stamp) with a mute toggle. Synthesised with Web Audio, no files. See `docs/ui_todo.md`.
+- [ ] Rank titles (Rookie, Detective, Inspector, Chief) shown on the leaderboard and avatar.
+- [ ] Loading screen ("Searching the archives...") and page transitions.

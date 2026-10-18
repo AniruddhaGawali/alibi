@@ -11,20 +11,22 @@ import (
 
 const adjustTokenBalance = `-- name: AdjustTokenBalance :one
 UPDATE users
-SET token_balance = token_balance + $1::bigint
-WHERE id = $2 AND token_balance + $1::bigint >= 0
+SET token_balance = LEAST(token_balance + $1::bigint, $2::bigint)
+WHERE id = $3 AND token_balance + $1::bigint >= 0
 RETURNING token_balance
 `
 
 type AdjustTokenBalanceParams struct {
 	Delta int64
+	Cap   int64
 	ID    string
 }
 
 // Adds delta (negative to spend). The WHERE clause turns an overdraw into "no
-// rows", so concurrent spends can never push the balance below zero.
+// rows", so concurrent spends can never push the balance below zero, and LEAST
+// stops a grant or refund from taking it above @cap.
 func (q *Queries) AdjustTokenBalance(ctx context.Context, arg AdjustTokenBalanceParams) (int64, error) {
-	row := q.db.QueryRow(ctx, adjustTokenBalance, arg.Delta, arg.ID)
+	row := q.db.QueryRow(ctx, adjustTokenBalance, arg.Delta, arg.Cap, arg.ID)
 	var token_balance int64
 	err := row.Scan(&token_balance)
 	return token_balance, err
@@ -39,4 +41,18 @@ func (q *Queries) GetTokenBalance(ctx context.Context, id string) (int64, error)
 	var token_balance int64
 	err := row.Scan(&token_balance)
 	return token_balance, err
+}
+
+const resetAllTokenBalances = `-- name: ResetAllTokenBalances :execrows
+UPDATE users SET token_balance = $1::bigint WHERE token_balance <> $1::bigint
+`
+
+// The daily reset: every balance becomes exactly @tokens. Unused tokens do not
+// roll over, and bonus tokens above the daily amount are not kept either.
+func (q *Queries) ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error) {
+	result, err := q.db.Exec(ctx, resetAllTokenBalances, tokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

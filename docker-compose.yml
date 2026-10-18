@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
@@ -8,7 +8,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d alibi"]
       interval: 5s
@@ -16,7 +16,9 @@ services:
       retries: 10
 
   mongo:
-    image: mongo:7
+    # Pinned to 7.0: mongo 8.x/9 refuse to start on Linux kernels >= 6.19 (SERVER-121912),
+    # which Docker Desktop's VM currently ships. Move back up once MongoDB ships a fix.
+    image: mongo:7.0
     ports:
       - "27017:27017"
     volumes:
@@ -29,7 +31,7 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7
+    image: redis:8
     ports:
       - "6379:6379"
     volumes:
@@ -41,7 +43,7 @@ services:
       retries: 10
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8
+    image: clickhouse/clickhouse-server:26.9
     environment:
       CLICKHOUSE_DB: otel
       CLICKHOUSE_USER: default
@@ -55,6 +57,12 @@ services:
         hard: 262144
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --query 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
 
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.110.0
@@ -65,7 +73,9 @@ services:
       - "4317:4317"
       - "4318:4318"
     depends_on:
-      - clickhouse
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
 
   # --- Application services (start with: docker compose --profile app up -d --build) ---
   # Each service gets an explicit allow-list of variables (least privilege): the
@@ -88,10 +98,28 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: otel-collector:4318
       OLLAMA_HOST: http://host.docker.internal:11434
       HTTP_ADDR: ":8080"
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-}
       JWT_REFRESH_TTL_HOURS: ${JWT_REFRESH_TTL_HOURS:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-}
+      LLM_USER_PER_MINUTE: ${LLM_USER_PER_MINUTE:-}
+      LLM_IP_PER_MINUTE: ${LLM_IP_PER_MINUTE:-}
+      LLM_MAX_CONCURRENT: ${LLM_MAX_CONCURRENT:-}
+      LLM_REFUNDS_PER_DAY: ${LLM_REFUNDS_PER_DAY:-}
+      LLM_DAILY_CALL_BUDGET: ${LLM_DAILY_CALL_BUDGET:-}
+      LLM_DAILY_TOKEN_BUDGET: ${LLM_DAILY_TOKEN_BUDGET:-}
+      LLM_INJECTION_STRIKES_PER_HOUR: ${LLM_INJECTION_STRIKES_PER_HOUR:-}
+      DAILY_TOKENS: ${DAILY_TOKENS:-}
+      TOKEN_RESET_CRON: ${TOKEN_RESET_CRON:-}
+      TOKEN_RESET_TIMEZONE: ${TOKEN_RESET_TIMEZONE:-}
+      MONGO_DATABASE: ${MONGO_DATABASE:-}
+      CHAT_WORKER_CONCURRENCY: ${CHAT_WORKER_CONCURRENCY:-}
+      SIGNUP_IP_DAILY_MAX: ${SIGNUP_IP_DAILY_MAX:-}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_BUCKET_NAME: ${SUPABASE_BUCKET_NAME:-}
       MIGRATE_ON_START: ${MIGRATE_ON_START:-}
       HTTP_WRITE_TIMEOUT_SECONDS: ${HTTP_WRITE_TIMEOUT_SECONDS:-}
       OTP_TTL_MINUTES: ${OTP_TTL_MINUTES:-}

@@ -79,6 +79,8 @@ start.mutate(id)                                                  // or await st
 
 ## Auth and cache notes
 
+- **Expired access tokens renew themselves.** `apiClient` answers a 401 (on any non-auth path) by calling `/api/auth/refresh` once with the refresh cookie, saving the new token pair and repeating the request. Concurrent 401s share one refresh (refresh tokens work once). Only a rejected refresh token ends the session: `setSessionExpiredHandler` (registered in `App.tsx`) clears the session and goes to `/login`. Network or server errors during refresh never log the user out. Route guards and the session store use `hasSession()` (access or refresh cookie), not the access cookie alone.
+
 - The JWT is read in exactly one place, `apiClient.ts`, from `src/utils/cookieHelpers.ts`. Don't read or attach tokens anywhere else. A planned move to an HttpOnly cookie set by the backend would then only change `apiClient.ts` (send `credentials: 'include'`), not any endpoint or component.
 - Invalidation scans the cached queries for matching tags, which is cheap at this size. Keep tags coarse and few (`'Dashboard'`, `'Stories'`, `{type, id}` for items) rather than one tag per field, and don't invalidate on every keystroke or poll.
 - Query failures arrive as `ApiError` with the backend's `message`; a 503 from `/health`-style degraded states and 429 (e.g. out of tokens) are meaningful, so show `error.message` rather than a generic failure.

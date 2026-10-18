@@ -19,6 +19,14 @@ cd frontend && npx shadcn@latest add <component> -y
 
 Never edit files in `src/components/ui/`. They are generated and a re-run of the CLI would overwrite changes. Change appearance through the theme (section 2) or by passing `className` at the call site. Import with the `@/` alias, e.g. `@/components/ui/button`.
 
+## 1b. Icons: Remix Icon only
+
+Every icon in the frontend comes from `@remixicon/react` (`import { RiTrophyLine } from '@remixicon/react'`). Do not use `lucide-react`, inline SVGs or emoji as icons, and do not add another icon package.
+
+- Component names are `Ri` + PascalCase name + `Line` (outline, the default here) or `Fill`, e.g. `RiCoinsLine`, `RiCloseLine`. Find a name on remixicon.com, and check it exists in the package before using it.
+- Size with Tailwind (`className="size-4"`), colour with a token (`text-gold`), and add `aria-hidden` when the icon sits next to text.
+- `components.json` has `"iconLibrary": "remixicon"`, so `npx shadcn@latest add <component>` generates shadcn components that already import Remix icons. If a generated file imports anything else, fix the import by re-adding it with `--overwrite` rather than hand-editing.
+
 ## 2. The theme lives in `src/index.css`
 
 Golden-sunset, dark-only, game-like (think Hogwarts Legacy menus). Change it by editing CSS variables and the rules at the bottom of `src/index.css`, not component files.
@@ -31,9 +39,13 @@ Golden-sunset, dark-only, game-like (think Hogwarts Legacy menus). Change it by 
 
 If a new component needs the look, extend the `[data-slot='...']` selectors in `index.css`.
 
+**Game props** (`src/components/game/`, styles at the bottom of `index.css`): `Tape`, `Stamp`, `Redacted`, `Typewriter` (with the `font-typewriter` Courier Prime utility) and `RedString`; add `className="frame"` to important panels for the gold corner frame (`frame-vintage` is the rococo version for hero panels, `GildedFrame` (components/game/) the carved wavy rococo frame for big pictures, drawn as SVG at the size of its box and overhanging it by ~30px so give it margin; `frame-portrait` the plain gilt moulding for the chat suspect image). `case-folder` + `case-sheet` + `PaperClip` make the aged paper case file. The cursor is a magnifier and buttons show a fingerprint on hover. Keep the golden-sunset palette; don't restyle these.
+
+**Chat and tokens** (`components/chat/`): the question-token balance has one home, `useGameStore.tokenBalance` (null until known), filled from the server by `useSyncTokenBalance` (mounted in `Layout`). Show it from the store, never from a query, so it can change optimistically: the chat takes 1 on send (`adjustTokenBalance(-1)`), gives it back on an error and sets the server's number on success. `Typewriter` / `useTypewriter` type text out and skip on click; pass `animate={false}` for text that was already read. Chat history comes from `api/chat.ts` (per suspect, one shared cache with the case log); new answers go in with `appendExchange`.
+
 ## 2b. Structure, providers and dependencies
 
-- **Keep pages thin.** A page in `src/pages/` composes feature components; it does not hold hundreds of lines of JSX. Put feature components in `src/components/<feature>/` (e.g. `components/showcase/` holds the UI showcase sections that `HomePage` composes, and `components/layout/` the shared layout). Split a component once it mixes unrelated concerns or grows past roughly 150 lines.
+- **Keep pages thin.** A page in `src/pages/` composes feature components; it does not hold hundreds of lines of JSX. Put feature components in `src/components/<feature>/` (e.g. `components/dashboard/` holds the dashboard panels that `DashboardPage` composes, and `components/layout/` the shared layout). Split a component once it mixes unrelated concerns or grows past roughly 150 lines.
 - **Providers live in `App.tsx`:** `ThemeProvider` (next-themes, forced `dark`, which shadcn's `Toaster` reads for its theme), `TooltipProvider`, the router and `Toaster`. `QueryClientProvider` is in `main.tsx`. A new shadcn component that needs a provider (the CLI prints a note) gets it added in `App.tsx`; without it the component can misbehave at runtime even though it compiles.
 - **Dependencies stay lean.** Before adding an npm package, check whether shadcn, Radix, Tailwind, zod, react-hook-form, React Router or an existing helper already does the job. Remove packages you stop using. `tailwindcss`, `tw-animate-css`, `shadcn` and the `@fontsource` packages look unused to scanners but are imported from `index.css`, so keep them.
 - **Auth token:** the JWT is currently a JS-readable cookie handled only in `src/utils/cookieHelpers.ts` and read only in `apiClient.ts`. Keep it that way (no `localStorage`, no token handling in components) so it can move to an HttpOnly cookie set by the backend without touching UI code.

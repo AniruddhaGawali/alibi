@@ -399,6 +399,20 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	// Insert first and delete the session after: a transient database error
 	// leaves the session intact so the user can retry, and the unique indexes
 	// make a double submit harmless.
+	// A new account comes with a day's question tokens, so accounts per address are
+	// capped. The signup session stays, so the user can finish once the wait is over.
+	ip := utils.ClientIP(r, h.TrustedProxies)
+	wait, err := h.Limiter.HitSignup(ctx, ip)
+	if err != nil {
+		utils.LogErrorCtx(ctx, "signup rate limit check failed", "err", err)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+		return
+	}
+	if wait > 0 {
+		utils.LogWarnCtx(ctx, "account creation rate limited", "ip", ip, "retry_after_sec", int(wait.Seconds()))
+		tooMany(w, wait)
+		return
+	}
 	u, err := h.Users.Create(ctx, sess.Username, addr, sess.HashedPassword, h.InitialTokens)
 	switch {
 	case errors.Is(err, user.ErrEmailTaken), errors.Is(err, user.ErrUsernameTaken):
