@@ -51,7 +51,10 @@ func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefi
 }
 
 const getUserLock = `-- name: GetUserLock :one
-SELECT case_id, story_id FROM active_case_locks WHERE user_id = $1
+SELECT l.case_id, l.story_id
+FROM active_case_locks l
+JOIN stories s ON s.id = l.story_id AND s.is_published
+WHERE l.user_id = $1
 `
 
 type GetUserLockRow struct {
@@ -60,6 +63,7 @@ type GetUserLockRow struct {
 }
 
 // The user's active case lock: the play-through id and the story it is for.
+// A lock on a story that was unpublished since is ignored, so it cannot trap the player.
 func (q *Queries) GetUserLock(ctx context.Context, userID string) (GetUserLockRow, error) {
 	row := q.db.QueryRow(ctx, getUserLock, userID)
 	var i GetUserLockRow
@@ -147,4 +151,34 @@ func (q *Queries) ListCaseSuspects(ctx context.Context, caseID string) ([]ListCa
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockUserToCase = `-- name: LockUserToCase :execrows
+INSERT INTO active_case_locks (user_id, case_id, story_id)
+SELECT $1::uuid, $2::uuid, s.id
+FROM stories s
+WHERE s.id = $3 AND s.is_published
+ON CONFLICT (user_id) DO UPDATE
+SET case_id = EXCLUDED.case_id, story_id = EXCLUDED.story_id, locked_at = now()
+WHERE NOT EXISTS (
+    SELECT 1 FROM stories old WHERE old.id = active_case_locks.story_id AND old.is_published
+)
+`
+
+type LockUserToCaseParams struct {
+	UserID  string
+	CaseID  string
+	StoryID string
+}
+
+// Locks the user into a published story in one statement, so there is no gap
+// between checking and inserting. Zero rows means the story is not published or
+// the user is already locked into a live case. A lock left on a story that was
+// unpublished since is taken over.
+func (q *Queries) LockUserToCase(ctx context.Context, arg LockUserToCaseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, lockUserToCase, arg.UserID, arg.CaseID, arg.StoryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

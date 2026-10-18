@@ -1,49 +1,16 @@
 package cases_test
 
 import (
+	"backend/internal/testdb"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"net/url"
 	"os"
 	"testing"
 
 	"backend/internal/cases"
-	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/user"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// throwawayDatabase creates an empty alibi_test_<random> database on the server
-// TEST_POSTGRES_URI points at, and drops it when the test ends.
-func throwawayDatabase(t *testing.T, adminURI string) *pgxpool.Pool {
-	t.Helper()
-	var rnd [6]byte
-	_, _ = rand.Read(rnd[:])
-	name := "alibi_test_" + hex.EncodeToString(rnd[:])
-	admin, err := db.ConnectPostgres(&config.Config{PostgresURI: adminURI, PGMaxConns: 2, ConnectTimeout: 5e9})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(context.Background(), "CREATE DATABASE "+name); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
-		admin.Close()
-	})
-	u, _ := url.Parse(adminURI)
-	u.Path = "/" + name
-	pool, err := db.ConnectPostgres(&config.Config{PostgresURI: u.String(), PGMaxConns: 4, ConnectTimeout: 5e9})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 // Runs against a real PostgreSQL when TEST_POSTGRES_URI is set (see internal/user).
 func TestPGStore(t *testing.T) {
@@ -52,7 +19,7 @@ func TestPGStore(t *testing.T) {
 		t.Skip("TEST_POSTGRES_URI not set")
 	}
 	ctx := context.Background()
-	pool := throwawayDatabase(t, uri)
+	pool := testdb.New(t, uri)
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +96,27 @@ func TestPGStore(t *testing.T) {
 	}
 	if l, _ := store.Lock(ctx, u.ID); l == nil || l.StoryID != story {
 		t.Fatalf("lock after start: %+v", l)
+	}
+
+	// A lock on a story that is unpublished later neither traps nor hides the player.
+	v, err := user.NewPGStore(pool).Create(ctx, "watson", "w@x.co", "h", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Start(ctx, v.ID, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE stories SET is_published = false WHERE id = $1", other); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := store.Lock(ctx, v.ID); err != nil || l != nil {
+		t.Fatalf("lock on unpublished story still visible: %v %v", l, err)
+	}
+	if l, err := store.Start(ctx, v.ID, story); err != nil || l.StoryID != story {
+		t.Fatalf("start after the locked story was unpublished: %+v %v", l, err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE stories SET is_published = true WHERE id = $1", other); err != nil {
+		t.Fatal(err)
 	}
 
 	// Notes: private per user, newest first, optional suspect of the same case, capped, owner-only delete.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"backend/pkg/utils"
+	"github.com/google/uuid"
 )
 
 // LogLookup finds interrogation log entries; *chat.MongoStore implements it.
@@ -43,7 +44,13 @@ func caseID(w http.ResponseWriter, r *http.Request) (string, bool) {
 		utils.ErrorResponse(w, http.StatusBadRequest, "invalid case id", map[string]string{"id": "must be a valid UUID"})
 		return "", false
 	}
-	return id, true
+	// Ids are compared as strings, so use the canonical lower-case form.
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		utils.ErrorResponse(w, http.StatusBadRequest, "invalid case id", map[string]string{"id": "must be a valid UUID"})
+		return "", false
+	}
+	return parsed.String(), true
 }
 
 // allowed enforces the Active Case Lock: a player locked into one case may not

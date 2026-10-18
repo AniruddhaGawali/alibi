@@ -159,20 +159,10 @@ func (s *PGStore) Lock(ctx context.Context, userID string) (*Lock, error) {
 }
 
 func (s *PGStore) Start(ctx context.Context, userID, storyID string) (*Lock, error) {
-	ok, err := s.q.CaseIsPublished(ctx, storyID)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, ErrNotFound
-	}
 	caseID := uuid.NewString()
 	n, err := s.q.LockUserToCase(ctx, dbgen.LockUserToCaseParams{UserID: userID, CaseID: caseID, StoryID: storyID})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
-		if pgErr.ConstraintName == "active_case_locks_story_id_fkey" {
-			return nil, ErrNotFound
-		}
 		return nil, ErrUserGone
 	}
 	if err != nil {
@@ -181,7 +171,15 @@ func (s *PGStore) Start(ctx context.Context, userID, storyID string) (*Lock, err
 	if n == 1 {
 		return &Lock{CaseID: caseID, StoryID: storyID}, nil
 	}
-	// Already locked (maybe a double click on Start): same case is fine.
+	// Nothing written: the case is not published, or the player is already in a case.
+	ok, err := s.q.CaseIsPublished(ctx, storyID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	// Maybe a double click on Start: the same case is fine.
 	cur, err := s.Lock(ctx, userID)
 	if err != nil {
 		return nil, err

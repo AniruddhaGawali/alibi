@@ -132,6 +132,9 @@ func checkSupabase(cfg *Config) error {
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		return fmt.Errorf("SUPABASE_URL must be an http(s) URL such as https://<project>.supabase.co")
 	}
+	if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+		return fmt.Errorf("SUPABASE_URL must use https unless it points at localhost (the service-role key would travel in clear text)")
+	}
 	if cfg.SupabaseServiceRoleKey == "" {
 		return fmt.Errorf("SUPABASE_SERVICE_ROLE_KEY is required when SUPABASE_URL is set")
 	}
@@ -143,10 +146,11 @@ func checkSupabase(cfg *Config) error {
 func LoadWorker() (*Config, error) { return load(workerRequired) }
 
 // envFiles lists where a .env may live: the working directory and its parents.
-// That covers `go run` from the repo root, backend/ and backend/cmd/<name>/.
+// That covers `go run` from the repo root, backend/ and backend/cmd/<name>/
+// (three levels up at most, so a stray .env higher up is never picked up).
 func envFiles() []string {
 	files := []string{".env"}
-	for prefix := "../"; len(files) < 5; prefix += "../" {
+	for prefix := "../"; len(files) < 4; prefix += "../" {
 		files = append(files, prefix+".env")
 	}
 	return files
@@ -293,4 +297,13 @@ func parseOrigins(list string) []string {
 		}
 	}
 	return out
+}
+
+// isLoopback reports whether host is localhost or a loopback IP.
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

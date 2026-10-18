@@ -324,9 +324,9 @@ body::after {
   z-index: 100;
   background:
     radial-gradient(ellipse at center, transparent 55%, oklch(0 0 0 / 45%) 100%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.5'/%3E%3C/svg%3E");
+    url("./assets/noise.png");
+  /* A pre-rendered grain tile with plain alpha: cheap to composite, unlike a live SVG filter with a blend mode. */
   opacity: 0.09;
-  mix-blend-mode: overlay;
 }
 
 /* ---- Case-file props ------------------------------------------------------ */
@@ -479,36 +479,6 @@ body::after {
   background-size: 76px 76px, 76px 76px, 76px 76px, 76px 76px, 150px 53px, 150px 53px, 22px 54px, 22px 54px;
   background-position: left 0 top 26px, right 0 top 26px, left 0 bottom 26px, right 0 bottom 26px, top 0 center, bottom 0 center, left -5px center, right -5px center;
   filter: drop-shadow(0 2px 3px oklch(0 0 0 / 65%));
-}
-
-/* ---- Textures (pure CSS, no image files) --------------------------------- */
-/* Manila paper: case files, testimonies. Light surface, so use dark text on it. */
-.texture-paper {
-  background-color: #f4f1ea;
-  background-image:
-    radial-gradient(circle at center, transparent 50%, rgb(0 0 0 / 10%) 100%),
-    url("data:image/svg+xml;utf8,<svg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'><filter id='noise'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.08'/></svg>");
-  color: #2b2118;
-  box-shadow: 2px 2px 8px rgb(0 0 0 / 15%);
-}
-
-/* Corkboard: the dashboard / suspect board behind the red string. */
-.texture-cork {
-  background-color: #9c6b42;
-  background-image:
-    radial-gradient(circle, rgb(60 40 20 / 40%) 1px, transparent 2px),
-    radial-gradient(circle, rgb(60 40 20 / 50%) 1px, transparent 2px);
-  background-size: 12px 12px, 16px 16px;
-  background-position: 0 0, 6px 6px;
-  box-shadow: inset 0 0 40px rgb(0 0 0 / 60%);
-}
-
-/* Dark mahogany desk grain: header or page background. */
-.texture-wood {
-  background-color: #3b2818;
-  background-image:
-    repeating-linear-gradient(4deg, transparent, transparent 4px, rgb(0 0 0 / 15%) 5px, rgb(0 0 0 / 20%) 8px),
-    repeating-linear-gradient(-2deg, transparent, transparent 12px, rgb(255 255 255 / 3%) 13px, rgb(255 255 255 / 2%) 15px);
 }
 
 /* ---- Gallery frame (case photo) and portrait frame (chat suspect) ---------- */

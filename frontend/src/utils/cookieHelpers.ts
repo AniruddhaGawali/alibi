@@ -1,9 +1,8 @@
 const JWT_COOKIE = 'alibi_jwt'
 const REFRESH_COOKIE = 'alibi_refresh'
 const PENDING_OTP_EMAIL_COOKIE = 'pending_otp_email'
-const USER_DATA_COOKIE = 'user_data'
 
-const DEFAULT_MAX_AGE_SECONDS = 60 * 60 * 24 // 1 day
+const DEFAULT_JWT_MAX_AGE_SECONDS = 15 * 60 // the backend's default access token lifetime
 const REFRESH_MAX_AGE_SECONDS = 60 * 60 * 24 * 7 // matches the backend's 7 day refresh token
 const PENDING_OTP_MAX_AGE_SECONDS = 60 * 60 // the signup code is only valid for minutes
 
@@ -40,12 +39,9 @@ export function getJwt(): string | null {
   return readCookie(JWT_COOKIE)
 }
 
+/** Pass the server's `expires_in` as `maxAgeSeconds` so the cookie goes away when the token expires. */
 export function saveJwt(token: string, options: CookieOptions = {}): void {
-  writeCookie(JWT_COOKIE, token, options.maxAgeSeconds ?? DEFAULT_MAX_AGE_SECONDS)
-}
-
-export function updateJwt(token: string, options: CookieOptions = {}): void {
-  saveJwt(token, options)
+  writeCookie(JWT_COOKIE, token, options.maxAgeSeconds ?? DEFAULT_JWT_MAX_AGE_SECONDS)
 }
 
 export function deleteJwt(): void {
@@ -83,24 +79,4 @@ export function savePendingOtpEmail(email: string): void {
 
 export function deletePendingOtpEmail(): void {
   removeCookie(PENDING_OTP_EMAIL_COOKIE)
-}
-
-// --- Cached user profile (JSON) ---
-
-export function getUserData<T>(): T | null {
-  const raw = readCookie(USER_DATA_COOKIE)
-  if (raw === null) return null
-  try {
-    return JSON.parse(raw) as T
-  } catch {
-    return null
-  }
-}
-
-export function saveUserData<T>(data: T, options: CookieOptions = {}): void {
-  writeCookie(USER_DATA_COOKIE, JSON.stringify(data), options.maxAgeSeconds ?? REFRESH_MAX_AGE_SECONDS)
-}
-
-export function deleteUserData(): void {
-  removeCookie(USER_DATA_COOKIE)
 }

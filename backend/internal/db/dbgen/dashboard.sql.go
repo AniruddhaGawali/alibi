@@ -10,22 +10,24 @@ import (
 )
 
 const getActiveCase = `-- name: GetActiveCase :one
-SELECT l.case_id, s.title
+SELECT l.case_id, l.story_id, s.title
 FROM active_case_locks l
-JOIN stories s ON s.id = l.story_id
+JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = $1
 `
 
 type GetActiveCaseRow struct {
-	CaseID string
-	Title  string
+	CaseID  string
+	StoryID string
+	Title   string
 }
 
-// The case the user is locked into, with its story's title for display.
+// The case the user is locked into, with its story's id and title for display.
+// A lock on a story that was unpublished since does not count.
 func (q *Queries) GetActiveCase(ctx context.Context, userID string) (GetActiveCaseRow, error) {
 	row := q.db.QueryRow(ctx, getActiveCase, userID)
 	var i GetActiveCaseRow
-	err := row.Scan(&i.CaseID, &i.Title)
+	err := row.Scan(&i.CaseID, &i.StoryID, &i.Title)
 	return i, err
 }
 
@@ -119,27 +121,6 @@ func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
 	return items, nil
 }
 
-const lockUserToCase = `-- name: LockUserToCase :execrows
-INSERT INTO active_case_locks (user_id, case_id, story_id)
-VALUES ($1, $2, $3)
-ON CONFLICT (user_id) DO NOTHING
-`
-
-type LockUserToCaseParams struct {
-	UserID  string
-	CaseID  string
-	StoryID string
-}
-
-// Takes the lock. Zero rows means the user is already locked into a case.
-func (q *Queries) LockUserToCase(ctx context.Context, arg LockUserToCaseParams) (int64, error) {
-	result, err := q.db.Exec(ctx, lockUserToCase, arg.UserID, arg.CaseID, arg.StoryID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const releaseCaseLock = `-- name: ReleaseCaseLock :execrows
 DELETE FROM active_case_locks WHERE user_id = $1 AND case_id = $2
 `
@@ -149,6 +130,7 @@ type ReleaseCaseLockParams struct {
 	CaseID string
 }
 
+// Frees the user when the case is finished (called by the accusation flow, Phase 5).
 func (q *Queries) ReleaseCaseLock(ctx context.Context, arg ReleaseCaseLockParams) (int64, error) {
 	result, err := q.db.Exec(ctx, releaseCaseLock, arg.UserID, arg.CaseID)
 	if err != nil {

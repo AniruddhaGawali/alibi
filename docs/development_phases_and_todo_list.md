@@ -69,7 +69,7 @@
 ### P2.1 Dashboard Backend (Go)
 - [x] Create API endpoint to fetch available crime stories from PostgreSQL.
 - [x] Create API endpoint to fetch the user's current token balance and total trophies.
-- [x] Create API endpoint to fetch the top players from the Redis Leaderboard (ZSET).
+- [x] Create API endpoint to fetch the top players (`GET /api/dashboard/leaderboard`, read from Postgres through `users_trophies_rank_idx`; rows carry `is_me`, not user ids). A Redis ZSET can come back in Phase 5 if it is maintained and backfilled wherever trophies change.
 - [x] Implement "Active Case Lock" logic to verify if a user is currently locked into an unfinished case.
 
 ### P2.2 Dashboard Frontend (React)
@@ -79,7 +79,7 @@
 
 ### P2.3 Case Selection Integration
 - [x] Connect the dashboard UI to fetch live data from the backend using React Query.
-- [x] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active). Cards use `GET /api/dashboard/active-case`: the active one shows In progress, the rest Locked.
+- [x] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active). The active story id comes from `GET /api/dashboard/stats` (`active_story_id`): that card shows Continue, the rest are Locked (redacted, CLASSIFIED stamp, no button).
 
 ---
 

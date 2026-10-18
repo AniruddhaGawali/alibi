@@ -120,3 +120,15 @@ func must[T any](v T, err error) T {
 	}
 	return v
 }
+
+func TestCacheSecondsOnlyCachesUniqueNamesForever(t *testing.T) {
+	for path, want := range map[string]int{
+		"avatars/11111111_22222222.webp": immutableCacheSeconds,
+		"avatars/default/avatar-1.webp":  mutableCacheSeconds,
+		"cases/case-01/thumbnail.webp":   mutableCacheSeconds,
+	} {
+		if got := cacheSeconds(path); got != want {
+			t.Errorf("%s: max-age %d, want %d", path, got, want)
+		}
+	}
+}

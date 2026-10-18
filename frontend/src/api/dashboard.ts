@@ -17,19 +17,16 @@ export interface DashboardStats {
   cases_solved: number
   /** Title of the case in progress, or null when the user is free to pick one. */
   active_case_title: string | null
-}
-
-/** Both fields are null when the user is free to pick a new case. */
-export interface ActiveCase {
-  case_id: string | null
-  story_title: string | null
+  /** Id of the story in progress (match cards on this, titles are not unique), null when free. */
+  active_story_id: string | null
 }
 
 export interface LeaderboardEntry {
   rank: number
-  user_id: string
   username: string
   trophies: number
+  /** The signed-in player's own row. */
+  is_me: boolean
 }
 
 /** The live panels refetch every 5 minutes (React Query pauses this while the tab is hidden). */
@@ -49,11 +46,6 @@ export const dashboardApi = createApi({
       providesTags: ['Stats'],
       staleTime: 0,
     }),
-    getActiveCase: build.query<ActiveCase>({
-      query: () => '/api/dashboard/active-case',
-      providesTags: ['Stats'],
-      staleTime: 0,
-    }),
     getLeaderboard: build.query<LeaderboardEntry[]>({
       query: () => '/api/dashboard/leaderboard',
       providesTags: ['Leaderboard'],
@@ -63,7 +55,7 @@ export const dashboardApi = createApi({
 })
 
 export const {
-  useGetStoriesQuery, useGetStatsQuery,
-  useGetActiveCaseQuery,
+  useGetStoriesQuery,
+  useGetStatsQuery,
   useGetLeaderboardQuery,
 } = dashboardApi

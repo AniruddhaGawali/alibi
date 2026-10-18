@@ -135,8 +135,9 @@ export function createApi<E extends Record<string, QueryDef<any, any> | Mutation
           queryKey: [config.name, key, arg ?? null],
           queryFn: () => run(def.query(arg)),
           meta: { providesTags: def.providesTags, arg } satisfies QueryMeta,
-          staleTime: def.staleTime === undefined ? undefined : def.staleTime * 1000,
-          gcTime: def.keepUnusedDataFor === undefined ? undefined : def.keepUnusedDataFor * 1000,
+          // Only set when given: an explicit undefined would replace the QueryClient defaults.
+          ...(def.staleTime !== undefined && { staleTime: def.staleTime * 1000 }),
+          ...(def.keepUnusedDataFor !== undefined && { gcTime: def.keepUnusedDataFor * 1000 }),
           ...options,
         })
     } else {

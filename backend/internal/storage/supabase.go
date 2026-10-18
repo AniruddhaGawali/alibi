@@ -12,9 +12,22 @@ import (
 	"time"
 )
 
-// cacheSeconds is the Cache-Control max-age set on uploaded objects. Object
-// names are unique per upload (avatars get a fresh UUID), so they never change.
-const cacheSeconds = 31536000
+// Cache-Control max-age values for uploaded objects. Custom avatars get a fresh
+// UUID name per upload, so they never change and can be cached for a year. Every
+// other path (case art, default avatars) may be overwritten in place by assetctl,
+// so it is cached briefly and a corrected image shows up soon.
+const (
+	immutableCacheSeconds = 31536000
+	mutableCacheSeconds   = 300
+)
+
+// cacheSeconds picks the max-age for an object path.
+func cacheSeconds(path string) int {
+	if strings.HasPrefix(path, "avatars/") && !strings.HasPrefix(path, "avatars/default/") {
+		return immutableCacheSeconds
+	}
+	return mutableCacheSeconds
+}
 
 // SupabaseProvider stores images in a public Supabase Storage bucket through
 // its REST API, authenticated with the service-role key (which bypasses
@@ -57,7 +70,7 @@ func (p *SupabaseProvider) UploadImage(ctx context.Context, path string, data []
 	}
 	p.auth(req)
 	req.Header.Set("Content-Type", "image/webp")
-	req.Header.Set("Cache-Control", fmt.Sprintf("max-age=%d", cacheSeconds))
+	req.Header.Set("Cache-Control", fmt.Sprintf("max-age=%d", cacheSeconds(path)))
 	req.Header.Set("x-upsert", "true")
 	if err := p.do(req, "upload "+path); err != nil {
 		return "", err

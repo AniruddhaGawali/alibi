@@ -18,12 +18,11 @@ import (
 )
 
 const (
-	maxAvatarBytes   = 1 << 20  // strict limit on the uploaded image
-	multipartSlack   = 64 << 10 // room for multipart boundaries and the other fields
-	multipartMemory  = 2 << 20
-	defaultAvatarMax = 4 // default avatars are numbered 1..defaultAvatarMax
-	avatarFolder     = "avatars/"
-	storageTimeout   = 10 * time.Second // cleanup of replaced images in the object store
+	maxAvatarBytes  = 1 << 20  // strict limit on the uploaded image
+	multipartSlack  = 64 << 10 // room for multipart boundaries and the other fields
+	multipartMemory = 2 << 20
+	avatarFolder    = "avatars/"
+	storageTimeout  = 10 * time.Second // cleanup of replaced images in the object store
 
 	maxConcurrentAvatars = 3 // image decodes at once; more get a 503 instead of exhausting memory
 )
@@ -75,7 +74,7 @@ type profileResp struct {
 }
 
 type avatarReq struct {
-	Avatar int `json:"avatar" validate:"required,min=1,max=4"`
+	Avatar int `json:"avatar" validate:"required,min=1,max=4"` // default avatars are numbered 1-4
 }
 
 func avatarOf(u *User) avatarInfo {
@@ -186,6 +185,7 @@ func (h *Handler) saveDefault(w http.ResponseWriter, r *http.Request, uid string
 
 func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string, fh *multipart.FileHeader) {
 	if h.images == nil {
+		utils.LogWarnCtx(r.Context(), "custom avatar refused: image storage not configured")
 		utils.ErrorResponse(w, http.StatusServiceUnavailable, "custom avatars are not available right now, pick a default one", nil)
 		return
 	}
@@ -233,11 +233,14 @@ func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string,
 	case h.decoding <- struct{}{}:
 	default:
 		w.Header().Set("Retry-After", "2")
+		utils.LogWarnCtx(r.Context(), "avatar decode slots busy", "user_id", uid)
 		utils.ErrorResponse(w, http.StatusServiceUnavailable, "server busy, try again shortly", nil)
 		return
 	}
-	img, err := processAvatar(data)
-	<-h.decoding
+	img, err := func() ([]byte, error) {
+		defer func() { <-h.decoding }() // release the slot even if a decoder panics
+		return processAvatar(data)
+	}()
 	if errors.Is(err, errBadImage) {
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
 			map[string]string{"file": "must be a valid JPEG, PNG, GIF or WebP image"})

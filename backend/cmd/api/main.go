@@ -114,7 +114,13 @@ func run() error {
 	var images storage.Provider
 	if cfg.SupabaseURL != "" {
 		images = storage.NewSupabaseProvider(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey, cfg.SupabaseBucket)
-		checks["storage"] = images.Ping
+		// Not in the public /health probe (that would let anyone make the API call
+		// Supabase on demand): check once at startup instead.
+		pingCtx, cancelPing := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := images.Ping(pingCtx); err != nil {
+			utils.LogWarn("image storage check failed; custom avatar uploads may not work", "err", err)
+		}
+		cancelPing()
 	} else {
 		utils.LogWarn("SUPABASE_URL not set: custom avatar uploads are disabled")
 	}
@@ -185,7 +191,7 @@ func run() error {
 	defer func() { <-resetCron.Stop().Done() }() // waits for a running reset to finish
 	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID)
 	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID)
-	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, dashboard.NewLeaderboard(rdb), auth.UserID)
+	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID)
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
 	mux.HandleFunc("POST /api/auth/resend-otp", authH.ResendOTP)

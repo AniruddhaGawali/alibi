@@ -1,12 +1,5 @@
 import { createBrowserRouter, redirect } from 'react-router'
 import Layout from '../components/layout/Layout'
-import CasePage from '../pages/CasePage'
-import DashboardPage from '../pages/DashboardPage'
-import SignupPage from '../pages/SignupPage'
-import LoginPage from '../pages/LoginPage'
-import VerifyOtpPage from '../pages/VerifyOtpPage'
-import AvatarOnboardingPage from '../pages/AvatarOnboardingPage'
-import NotFoundPage from '../pages/NotFoundPage'
 import { guestOnlyLoader, requireAuthLoader } from './guards'
 
 export const router = createBrowserRouter([
@@ -17,20 +10,20 @@ export const router = createBrowserRouter([
       {
         loader: guestOnlyLoader,
         children: [
-          { path: '/signup', element: <SignupPage /> },
-          { path: '/login', element: <LoginPage /> },
-          { path: '/verify-otp', element: <VerifyOtpPage /> },
+          { path: '/signup', lazy: async () => ({ Component: (await import('../pages/SignupPage')).default }) },
+          { path: '/login', lazy: async () => ({ Component: (await import('../pages/LoginPage')).default }) },
+          { path: '/verify-otp', lazy: async () => ({ Component: (await import('../pages/VerifyOtpPage')).default }) },
         ],
       },
       {
         loader: requireAuthLoader,
         children: [
-          { path: '/dashboard', element: <DashboardPage /> },
-          { path: '/case/:id', element: <CasePage /> },
-          { path: '/onboarding/avatar', element: <AvatarOnboardingPage /> },
+          { path: '/dashboard', lazy: async () => ({ Component: (await import('../pages/DashboardPage')).default }) },
+          { path: '/case/:id', lazy: async () => ({ Component: (await import('../pages/CasePage')).default }) },
+          { path: '/onboarding/avatar', lazy: async () => ({ Component: (await import('../pages/AvatarOnboardingPage')).default }) },
         ],
       },
-      { path: '*', element: <NotFoundPage /> },
+      { path: '*', lazy: async () => ({ Component: (await import('../pages/NotFoundPage')).default }) },
     ],
   },
 ])

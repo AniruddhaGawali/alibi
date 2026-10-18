@@ -4,7 +4,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LEADERBOARD_POLL_MS, useGetLeaderboardQuery } from '@/api/dashboard'
-import { useGetUserDataQuery } from '@/api/user'
 import { cn } from '@/lib/utils'
 
 /**
@@ -15,7 +14,6 @@ export default function Leaderboard({ side }: { side?: ReactNode }) {
   const { data: entries, isPending, error } = useGetLeaderboardQuery(undefined, {
     refetchInterval: LEADERBOARD_POLL_MS,
   })
-  const { data: me } = useGetUserDataQuery()
 
   return (
     <section className="space-y-3">
@@ -52,7 +50,7 @@ export default function Leaderboard({ side }: { side?: ReactNode }) {
             </TableHeader>
             <TableBody aria-live="polite">
               {entries.map((e) => (
-                <TableRow key={e.user_id} className={cn(e.user_id === me?.id && 'bg-primary/10 text-primary')}>
+                <TableRow key={e.rank} className={cn(e.is_me && 'bg-primary/10 text-primary')}>
                   <TableCell className="font-heading">{e.rank}</TableCell>
                   <TableCell className="max-w-0 truncate">{e.username}</TableCell>
                   <TableCell className="text-right text-gold">{e.trophies}</TableCell>

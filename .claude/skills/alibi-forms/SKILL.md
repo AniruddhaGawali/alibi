@@ -76,6 +76,6 @@ export function SignupForm() {
 - **Forms inside dialogs or sheets** work the same; put the `<form>` inside the content.
 - **Styling** (sharp corners, gold focus glow, red error glow) comes from the theme in `src/index.css` automatically. Do not add custom error styles.
 
-A working reference with every control and zod errors is `frontend/src/components/showcase/FormSection.tsx`. Put each real form in its own component under `src/components/<feature>/` (e.g. `components/auth/SignupForm.tsx`) so pages stay thin.
+The real forms in `src/components/auth/` (`SignupForm.tsx`, `AvatarForm.tsx`) are the working references. Put each real form in its own component under `src/components/<feature>/` (e.g. `components/auth/SignupForm.tsx`) so pages stay thin.
 
 Finish with `cd frontend && npm run build && npm run lint`.

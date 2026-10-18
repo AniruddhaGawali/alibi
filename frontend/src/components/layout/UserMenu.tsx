@@ -18,11 +18,24 @@ import { avatarSrc } from '@/utils/avatar'
 
 /** Profile button on the right of the navbar; opens a menu with the user's details. */
 export default function UserMenu() {
-  const { data: user, isPending } = useCurrentUser()
+  const { data: user, isPending, isError, refetch } = useCurrentUser()
   const { logout, isPending: loggingOut } = useLogout()
   const { data: stats } = useGetStatsQuery(undefined, { refetchInterval: STATS_POLL_MS })
   const tokens = useGameStore((s) => s.tokenBalance)
 
+  if (isError && !user) {
+    // The profile failed to load: never leave the user without a way out.
+    return (
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>
+          Retry
+        </Button>
+        <Button variant="ghost" size="sm" disabled={loggingOut} onClick={logout}>
+          {loggingOut ? 'Logging out…' : 'Log out'}
+        </Button>
+      </div>
+    )
+  }
   if (isPending || !user) return <Skeleton className="h-9 w-32" />
 
   return (

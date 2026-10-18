@@ -20,12 +20,11 @@ type Balancer interface {
 type Handler struct {
 	store   Store
 	balance Balancer
-	board   Board
 	userID  func(context.Context) string // auth.UserID in production
 }
 
-func NewHandler(store Store, balance Balancer, board Board, userID func(context.Context) string) *Handler {
-	return &Handler{store: store, balance: balance, board: board, userID: userID}
+func NewHandler(store Store, balance Balancer, userID func(context.Context) string) *Handler {
+	return &Handler{store: store, balance: balance, userID: userID}
 }
 
 type statsResp struct {
@@ -33,17 +32,19 @@ type statsResp struct {
 	Tokens          int64   `json:"tokens"`
 	CasesSolved     int64   `json:"cases_solved"`
 	ActiveCaseTitle *string `json:"active_case_title"` // null when no case is in progress
+	ActiveStoryID   *string `json:"active_story_id"`   // the story being played, null when none
 }
 
 type rankedPlayer struct {
 	Rank     int    `json:"rank"`
-	UserID   string `json:"user_id"`
 	Username string `json:"username"`
 	Trophies int64  `json:"trophies"`
+	IsMe     bool   `json:"is_me"` // the caller's own row; internal user ids are never exposed
 }
 
 type activeCaseResp struct {
-	CaseID     *string `json:"case_id"`     // null when the user is free to pick a story
+	CaseID     *string `json:"case_id"`     // the play-through id; null when the user is free to pick a story
+	StoryID    *string `json:"story_id"`    // the story being played, null when free
 	StoryTitle *string `json:"story_title"` // title of that story, null when free
 }
 
@@ -82,51 +83,24 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	resp := statsResp{Trophies: st.Trophies, Tokens: tokens, CasesSolved: st.CasesSolved}
 	if active != nil {
 		resp.ActiveCaseTitle = &active.Title
+		resp.ActiveStoryID = &active.StoryID
 	}
 	utils.SuccessResponse(w, http.StatusOK, resp)
 }
 
 // Leaderboard handles GET /api/dashboard/leaderboard: the top players by
-// trophies from the Redis sorted set, or from Postgres if Redis has nothing.
+// trophies, read from Postgres (users_trophies_rank_idx makes this an index scan).
 func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	entries, err := h.board.Top(ctx, leaderboardSize)
+	ctx, uid := r.Context(), h.userID(r.Context())
+	players, err := h.store.TopPlayers(ctx, leaderboardSize)
 	if err != nil {
-		utils.LogErrorCtx(ctx, "leaderboard read failed; using postgres", "err", err)
-	}
-	if err != nil || len(entries) == 0 {
-		players, err := h.store.TopPlayers(ctx, leaderboardSize)
-		if err != nil {
-			utils.LogErrorCtx(ctx, "leaderboard fallback failed", "err", err)
-			utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the leaderboard", nil)
-			return
-		}
-		out := make([]rankedPlayer, 0, len(players))
-		for i, p := range players {
-			out = append(out, rankedPlayer{Rank: i + 1, UserID: p.ID, Username: p.Username, Trophies: p.Trophies})
-		}
-		utils.SuccessResponse(w, http.StatusOK, out)
-		return
-	}
-
-	ids := make([]string, len(entries))
-	for i, e := range entries {
-		ids[i] = e.UserID
-	}
-	names, err := h.store.Usernames(ctx, ids)
-	if err != nil {
-		utils.LogErrorCtx(ctx, "leaderboard usernames failed", "err", err)
+		utils.LogErrorCtx(ctx, "leaderboard read failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the leaderboard", nil)
 		return
 	}
-	out := make([]rankedPlayer, 0, len(entries))
-	for _, e := range entries {
-		name, ok := names[e.UserID]
-		if !ok {
-			continue // deleted account still in the set
-		}
-		out = append(out, rankedPlayer{Rank: len(out) + 1, UserID: e.UserID, Username: name, Trophies: e.Trophies})
+	out := make([]rankedPlayer, 0, len(players))
+	for i, p := range players {
+		out = append(out, rankedPlayer{Rank: i + 1, Username: p.Username, Trophies: p.Trophies, IsMe: p.ID == uid})
 	}
 	utils.SuccessResponse(w, http.StatusOK, out)
 }
@@ -144,7 +118,7 @@ func (h *Handler) ActiveCase(w http.ResponseWriter, r *http.Request) {
 	}
 	var resp activeCaseResp
 	if active != nil {
-		resp = activeCaseResp{CaseID: &active.CaseID, StoryTitle: &active.Title}
+		resp = activeCaseResp{CaseID: &active.CaseID, StoryID: &active.StoryID, StoryTitle: &active.Title}
 	}
 	utils.SuccessResponse(w, http.StatusOK, resp)
 }

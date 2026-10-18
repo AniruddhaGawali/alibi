@@ -1,6 +1,6 @@
 #!/bin/sh
-# Loads the development test data into the docker-compose Postgres and mirrors
-# the trophy totals into the Redis leaderboard (the API reads Redis first).
+# Loads the development test data into the docker-compose Postgres. The
+# leaderboard is read straight from Postgres, so nothing else needs seeding.
 set -eu
 cd "$(dirname "$0")/../../.."
 
@@ -14,7 +14,4 @@ if [ -n "${SUPABASE_URL:-}" ]; then
 fi
 
 $PSQL -q -v asset_base="$ASSET_BASE" < backend/sql/seed/dev_seed.sql
-$PSQL -tA -F ' ' -c "SELECT trophies, id FROM users WHERE trophies > 0" |
-	while read -r trophies id; do echo "ZADD leaderboard:trophies $trophies $id"; done |
-	docker compose exec -T redis redis-cli > /dev/null
 echo "seeded: $($PSQL -tA -c 'SELECT count(*) FROM stories') stories, $($PSQL -tA -c 'SELECT count(*) FROM users WHERE trophies > 0') ranked users"

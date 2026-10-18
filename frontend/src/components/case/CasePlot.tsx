@@ -11,7 +11,7 @@ export default function CasePlot({ plot, synopsis }: { plot: string; synopsis: s
     <div className="case-folder relative mx-auto my-2 w-full max-w-md lg:aspect-[3/4] lg:max-w-none lg:self-center">
       <PaperClip />
       <div className="case-sheet no-scrollbar space-y-3 p-7 pt-14 font-typewriter text-sm leading-relaxed lg:absolute lg:inset-0 lg:overflow-y-auto">
-        <h2 className="border-b-2 border-dashed border-[#5c2c10]/50 pb-2 font-typewriter text-lg font-bold tracking-widest uppercase">
+        <h2 className="border-b-2 border-dashed border-current/50 pb-2 font-typewriter text-lg font-bold tracking-widest uppercase">
           Case file · Confidential
         </h2>
         {paragraphs.map((p, i) => (

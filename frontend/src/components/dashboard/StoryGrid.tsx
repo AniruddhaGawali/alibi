@@ -4,15 +4,15 @@ import { play } from '@/utils/sound'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useStartCaseMutation } from '@/api/cases'
-import { useGetActiveCaseQuery, useGetStoriesQuery } from '@/api/dashboard'
+import { useGetStatsQuery, useGetStoriesQuery } from '@/api/dashboard'
 import RedString from '@/components/game/RedString'
 import StoryCard from './StoryCard'
 
 export default function StoryGrid() {
-  const { data: fetched, isPending, error } = useGetStoriesQuery()
-  const stories = withDemoCopies(fetched)
-  const { data: active } = useGetActiveCaseQuery()
-  const activeTitle = active?.story_title ?? null
+  const { data: stories = [], isPending, error } = useGetStoriesQuery()
+  // The stats already say which story is in progress (the stats panel shares this query).
+  const { data: stats } = useGetStatsQuery()
+  const activeId = stats?.active_story_id ?? null
   const navigate = useNavigate()
   // Starting a case you are already in is fine, so Start and Continue share this.
   const startCase = useStartCaseMutation({
@@ -47,9 +47,10 @@ export default function StoryGrid() {
               busy={startCase.isPending}
               onOpen={(s) => {
                 play('paper')
-                startCase.mutate(s.id.replace(/-demo-\d+$/, ''))
+                startCase.mutate(s.id)
               }}
-              inProgress={story.title === activeTitle}
+              inProgress={story.id === activeId}
+              locked={activeId !== null && story.id !== activeId}
             />
           ))}
           </div>
@@ -57,19 +58,4 @@ export default function StoryGrid() {
       )}
     </section>
   )
-}
-
-/**
- * Dev-only layout check: open /dashboard?demo=10 to repeat the cases up to 10 cards
- * (copies get fresh ids). Never active in a production build.
- */
-function withDemoCopies<T extends { id: string }>(stories: T[] | undefined): T[] {
-  if (!stories) return []
-  if (!import.meta.env.DEV || stories.length === 0) return stories
-  const n = Number(new URLSearchParams(window.location.search).get('demo'))
-  if (!Number.isInteger(n) || n <= stories.length) return stories
-  return Array.from({ length: Math.min(n, 30) }, (_, i) => {
-    const base = stories[i % stories.length]
-    return i < stories.length ? base : { ...base, id: `${base.id}-demo-${i}` }
-  })
 }

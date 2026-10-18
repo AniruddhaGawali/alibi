@@ -28,7 +28,7 @@ interface Envelope<T> {
 }
 
 /** Auth endpoints answer 401 for reasons a token refresh cannot fix (wrong password, bad code). */
-const NO_REFRESH_PATHS = ['/api/auth/login', '/api/auth/signup', '/api/auth/verify-otp', '/api/auth/resend-otp', '/api/auth/refresh', '/api/auth/logout']
+const NO_REFRESH_PATHS = ['/api/auth/login', '/api/auth/signup', '/api/auth/verify-otp', '/api/auth/resend-otp', '/api/auth/refresh']
 
 let onSessionExpired: (() => void) | null = null
 
@@ -40,6 +40,7 @@ export function setSessionExpiredHandler(handler: () => void): void {
 interface RefreshedTokens {
   jwt_token: string
   refresh_token: string
+  expires_in: number
 }
 
 /** The renewal already in flight. Refresh tokens work once, so concurrent 401s must share a single call. */
@@ -67,7 +68,7 @@ function renew(): Promise<boolean> {
       }
       const body: Envelope<RefreshedTokens> | null = await res.json().catch(() => null)
       if (!res.ok || body?.status !== 'success' || !body.data) return false
-      saveJwt(body.data.jwt_token)
+      saveJwt(body.data.jwt_token, { maxAgeSeconds: body.data.expires_in })
       saveRefreshToken(body.data.refresh_token)
       return true
     } catch {
@@ -77,6 +78,17 @@ function renew(): Promise<boolean> {
     refreshing = null
   })
   return refreshing
+}
+
+/**
+ * Renews the access token when its cookie has expired but the refresh token is still
+ * there. Call it before reading the refresh token for a request body (logout), since
+ * renewing rotates the refresh token. Resolves false when there is nothing to renew
+ * or the renewal failed.
+ */
+export async function ensureAccessToken(): Promise<boolean> {
+  if (getJwt()) return true
+  return getRefreshToken() ? renew() : false
 }
 
 function send(path: string, init: RequestInit): Promise<Response> {

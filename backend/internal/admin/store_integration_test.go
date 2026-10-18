@@ -1,50 +1,17 @@
 package admin_test
 
 import (
+	"backend/internal/testdb"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"net/url"
 	"os"
 	"testing"
 
 	"backend/internal/admin"
-	"backend/internal/config"
 	"backend/internal/db"
 	"backend/internal/llm"
 	"backend/internal/user"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-// throwawayDatabase creates an empty alibi_test_<random> database on the server
-// TEST_POSTGRES_URI points at, and drops it when the test ends.
-func throwawayDatabase(t *testing.T, adminURI string) *pgxpool.Pool {
-	t.Helper()
-	var rnd [6]byte
-	_, _ = rand.Read(rnd[:])
-	name := "alibi_test_" + hex.EncodeToString(rnd[:])
-	admin, err := db.ConnectPostgres(&config.Config{PostgresURI: adminURI, PGMaxConns: 2, ConnectTimeout: 5e9})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := admin.Exec(context.Background(), "CREATE DATABASE "+name); err != nil {
-		admin.Close()
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
-		admin.Close()
-	})
-	u, _ := url.Parse(adminURI)
-	u.Path = "/" + name
-	pool, err := db.ConnectPostgres(&config.Config{PostgresURI: u.String(), PGMaxConns: 4, ConnectTimeout: 5e9})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
-}
 
 // Runs against a real PostgreSQL when TEST_POSTGRES_URI is set (see internal/user).
 func TestPGStore(t *testing.T) {
@@ -53,7 +20,7 @@ func TestPGStore(t *testing.T) {
 		t.Skip("TEST_POSTGRES_URI not set")
 	}
 	ctx := context.Background()
-	pool := throwawayDatabase(t, uri)
+	pool := testdb.New(t, uri)
 	if err := db.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

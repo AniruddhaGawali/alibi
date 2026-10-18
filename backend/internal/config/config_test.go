@@ -2,7 +2,10 @@ package config
 
 import (
 	"net"
+	"strings"
 	"testing"
+
+	"github.com/joho/godotenv"
 )
 
 func TestEnvIntFallsBackOnInvalid(t *testing.T) {
@@ -69,7 +72,7 @@ func TestDefaultTrustedProxiesAreLoopbackOnly(t *testing.T) {
 
 func TestEnvFilesSearchParentDirectories(t *testing.T) {
 	got := envFiles()
-	want := []string{".env", "../.env", "../../.env", "../../../.env", "../../../../.env"}
+	want := []string{".env", "../.env", "../../.env", "../../../.env"} // cwd + 3 parents: backend/cmd/<name> reaches the repo root
 	if len(got) != len(want) {
 		t.Fatalf("got %v", got)
 	}
@@ -95,10 +98,32 @@ func TestCheckSupabase(t *testing.T) {
 		{SupabaseURL: "https://abc.supabase.co"}, // key missing
 		{SupabaseURL: "abc.supabase.co", SupabaseServiceRoleKey: "k"},
 		{SupabaseURL: "ftp://abc", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "http://abc.supabase.co", SupabaseServiceRoleKey: "k"}, // key would travel in clear text
 	}
 	for _, c := range bad {
 		if err := checkSupabase(&c); err == nil {
 			t.Errorf("%+v: want error", c)
 		}
+	}
+}
+
+// Copying .env.example to .env must give a working config: no value may carry an
+// inline "# comment" (godotenv would keep it as part of the value), and the
+// secret must be left blank so nobody runs with a key that is in git.
+func TestEnvExampleIsSafeToCopy(t *testing.T) {
+	vars, err := godotenv.Read("../../../.env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, v := range vars {
+		if strings.Contains(v, "#") {
+			t.Errorf("%s=%q has an inline comment; put comments on their own line", k, v)
+		}
+	}
+	if vars["JWT_SECRET"] != "" {
+		t.Errorf("JWT_SECRET must be blank in .env.example")
+	}
+	if err := checkSupabase(&Config{SupabaseURL: vars["SUPABASE_URL"], SupabaseServiceRoleKey: vars["SUPABASE_SERVICE_ROLE_KEY"]}); err != nil {
+		t.Errorf("example Supabase settings rejected: %v", err)
 	}
 }

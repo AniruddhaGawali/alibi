@@ -19,7 +19,6 @@ export default function Typewriter({ text, speedMs = 28, animate = true, onDone,
   return (
     <span
       className={`font-typewriter ${typing ? 'cursor-pointer' : ''} ${className ?? ''}`}
-      aria-label={text}
       {...(typing && {
         role: 'button',
         tabIndex: 0,
@@ -33,6 +32,7 @@ export default function Typewriter({ text, speedMs = 28, animate = true, onDone,
         },
       })}
     >
+      <span className="sr-only">{text}</span>
       <span aria-hidden>{shown}</span>
       {typing && <span aria-hidden className="typewriter-caret" />}
     </span>

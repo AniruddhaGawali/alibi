@@ -6,8 +6,7 @@ import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { FieldGroup, FieldSeparator } from '@/components/ui/field'
 import { FormFile, FormImageChoice, type ImageChoice } from '@/components/form'
-import { useSetAvatarMutation, type UserProfile } from '@/api/user'
-import { getUserData, saveUserData } from '@/utils/cookieHelpers'
+import { useSetAvatarMutation } from '@/api/user'
 import { defaultAvatarSrc } from '@/utils/avatar'
 import AuthCard from './AuthCard'
 
@@ -46,11 +45,7 @@ export default function AvatarForm() {
     defaultValues: { file: undefined, defaultId: null },
   })
   const setAvatar = useSetAvatarMutation({
-    onSuccess: (avatar) => {
-      const user = getUserData<UserProfile>()
-      if (user) saveUserData({ ...user, avatar })
-      navigate('/dashboard')
-    },
+    onSuccess: () => navigate('/dashboard'),
     onError: (e) => toast.error(e.message),
   })
 
