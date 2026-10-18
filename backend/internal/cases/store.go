@@ -101,9 +101,12 @@ type Note struct {
 }
 
 // PGStore implements Store. All SQL is in sql/queries/cases.sql (sqlc).
-type PGStore struct{ q *dbgen.Queries }
+type PGStore struct {
+	pool *pgxpool.Pool
+	q    *dbgen.Queries
+}
 
-func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
+func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool, q: dbgen.New(pool)} }
 
 func (s *PGStore) Briefing(ctx context.Context, id string) (*Briefing, error) {
 	row, err := s.q.GetCaseBriefing(ctx, id)
@@ -219,9 +222,25 @@ func (s *PGStore) AddNote(ctx context.Context, userID, storyID string, suspectID
 			return nil, ErrBadSuspect
 		}
 	}
-	row, err := s.q.CreateCaseNote(ctx, dbgen.CreateCaseNoteParams{
+	// The count and the insert run under an advisory lock, so parallel requests
+	// cannot all see 199 notes and all insert.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	q := s.q.WithTx(tx)
+	if err := q.LockCaseNotes(ctx, dbgen.LockCaseNotesParams{UserID: userID, StoryID: storyID}); err != nil {
+		return nil, err
+	}
+	row, err := q.CreateCaseNote(ctx, dbgen.CreateCaseNoteParams{
 		UserID: userID, StoryID: storyID, SuspectID: suspectID, ChatMessageID: chatMessageID, Body: body, MaxNotes: MaxNotesPerCase,
 	})
+	if err == nil {
+		if err = tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotesFull
 	}

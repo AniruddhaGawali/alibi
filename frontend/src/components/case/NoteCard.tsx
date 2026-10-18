@@ -1,6 +1,7 @@
 import { RiDeleteBinLine } from '@remixicon/react'
 import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { useDeleteNoteMutation, type CaseNoteItem } from '@/api/cases'
 import type { ChatMessage } from '@/api/chat'
 import { timeAgo } from '@/utils/relativeTime'
@@ -14,13 +15,13 @@ export default function NoteCard({ note, caseId, aboutName, entry }: { note: Cas
     <article className="case-sheet space-y-2 p-4 font-typewriter text-sm">
       <header className="flex flex-wrap items-center gap-2">
         <Badge>Your note</Badge>
-        <span className="text-xs text-[#3a2a18]/80">{aboutName ? `about ${aboutName}` : 'about the case'}</span>
-        <time dateTime={note.created_at} className="ml-auto text-xs text-[#3a2a18]/70">
+        <span className="text-xs text-paper-ink/80">{aboutName ? `about ${aboutName}` : 'about the case'}</span>
+        <time dateTime={note.created_at} className="ml-auto text-xs text-paper-ink/70">
           {timeAgo(note.created_at)}
         </time>
       </header>
       {note.chat_message_id && (
-        <blockquote className="border-l-2 border-[#5c2c10]/60 pl-2 text-xs text-[#3a2a18]/80">
+        <blockquote className="border-l-2 border-paper-rust/60 pl-2 text-xs text-paper-ink/80">
           {entry ? (
             <>
               on the question <span className="italic">“{entry.user_query}”</span>
@@ -31,15 +32,17 @@ export default function NoteCard({ note, caseId, aboutName, entry }: { note: Cas
         </blockquote>
       )}
       <p className="break-words whitespace-pre-wrap">{note.body}</p>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         disabled={remove.isPending}
         onClick={() => remove.mutate({ caseId, noteId: note.id })}
         aria-label="Delete note"
-        className="flex items-center gap-1 text-xs text-[#7a1010] hover:underline"
+        className="-ml-2 text-paper-red hover:bg-paper-red/10 hover:text-paper-red"
       >
         <RiDeleteBinLine className="size-4" aria-hidden /> Delete
-      </button>
+      </Button>
     </article>
   )
 }

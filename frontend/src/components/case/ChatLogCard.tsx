@@ -3,7 +3,7 @@ import { RiChat3Line, RiQuillPenLine } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/useChatStore'
 import { timeAgo } from '@/utils/relativeTime'
-import { isLocalMessage, type ChatMessage } from '@/api/chat'
+import { isPendingMessage, type ChatMessage } from '@/api/chat'
 import LogNoteForm from './LogNoteForm'
 
 /** One interrogation exchange: who was asked, the question, the typed answer, and a way back into the chat. */
@@ -11,7 +11,7 @@ export default function ChatLogCard({ log, caseId, avatarUrl }: { log: ChatMessa
   const openChat = useChatStore((s) => s.openChat)
   const [noting, setNoting] = useState(false)
   // an entry answered a moment ago has no stored id yet; a note needs the stored one
-  const saved = !isLocalMessage(log)
+  const saved = !isPendingMessage(log)
 
   return (
     <article className="frame space-y-3 bg-card p-5">

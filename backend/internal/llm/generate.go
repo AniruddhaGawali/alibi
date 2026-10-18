@@ -27,7 +27,7 @@ var (
 )
 
 // maxReplyTokens hard-caps the answer; the prompt asks for MaxReplyWords.
-const maxReplyTokens = 220
+const maxReplyTokens = 160
 
 // Turn is one earlier question and answer of the same interrogation.
 type Turn struct {
@@ -48,6 +48,8 @@ type Request struct {
 type Reply struct {
 	Text  string
 	Model string // the model that actually answered
+	// TotalTokens is what OpenRouter says the call used (prompt and answer); 0 when it did not say.
+	TotalTokens int64
 }
 
 // Generator produces a suspect's answer. *Clients implements it; tests use fakes.
@@ -151,7 +153,11 @@ func replyFrom(r *components.ChatResult) (*Reply, error) {
 	if text == "" {
 		return nil, fmt.Errorf("%w: empty text", ErrBadOutput)
 	}
-	return &Reply{Text: text, Model: r.Model}, nil
+	reply := &Reply{Text: text, Model: r.Model}
+	if r.Usage != nil {
+		reply.TotalTokens = r.Usage.TotalTokens
+	}
+	return reply, nil
 }
 
 // defaultTimeout bounds one interrogation call when NewClients gets none.

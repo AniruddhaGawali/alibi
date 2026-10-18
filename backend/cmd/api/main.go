@@ -140,7 +140,7 @@ func run() error {
 		Limiter: auth.NewLimiter(rdb, auth.Policy{
 			Cooldown: cfg.OTPCooldown, EmailDailyMax: cfg.OTPEmailDailyMax,
 			IPMax: cfg.OTPIPMax, IPWindow: cfg.OTPIPWindow,
-			AuthIPMax: cfg.AuthIPMax, AuthIPWindow: cfg.AuthIPWindow,
+			AuthIPMax: cfg.AuthIPMax, AuthIPWindow: cfg.AuthIPWindow, SignupIPDailyMax: cfg.SignupIPDailyMax,
 			LoginMaxFailures: cfg.LoginMaxFailures,
 		}),
 		Mail:           queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen)), // the email worker consumes it
@@ -168,7 +168,18 @@ func run() error {
 	chatH := chat.NewHandler(chatStore, auth.UserID)
 	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID).WithLogs(chatStore) // notes can point at log entries
 
-	interrogationSvc := interrogation.NewService(interrogation.NewPGStore(pg), llmClients, walletSvc, chatBroker, chatStore)
+	guard := interrogation.NewRedisGuard(rdb, interrogation.GuardConfig{
+		PerMinute:        cfg.LLMUserPerMinute,
+		IPPerMinute:      cfg.LLMIPPerMinute,
+		UserDailyCalls:   cfg.DailyTokens + cfg.LLMRefundsPerDay, // calls <= tokens spent + the refund allowance
+		RefundsPerDay:    cfg.LLMRefundsPerDay,
+		MaxConcurrent:    cfg.LLMMaxConcurrent,
+		DailyCallBudget:  int64(cfg.LLMDailyCallBudget),
+		DailyTokenBudget: int64(cfg.LLMDailyTokenBudget),
+		StrikesPerHour:   cfg.LLMStrikesPerHour,
+		InFlightTTL:      cfg.LLMTimeout + 30*time.Second,
+	})
+	interrogationSvc := interrogation.NewService(interrogation.NewPGStore(pg), llmClients, walletSvc, chatBroker, chatStore, interrogation.WithGuard(guard))
 	defer interrogationSvc.Wait() // let queued chat events finish publishing on shutdown
 
 	// Background work in this process: the chat storage worker and the daily token
@@ -180,6 +191,7 @@ func run() error {
 		defer close(chatWorkerDone)
 		chat.NewWorker(chatBroker, chatStore).Run(bgCtx, cfg.ChatWorkerConcurrency)
 	}()
+	go chat.Monitor(bgCtx, chatBroker, 30*time.Second)
 	defer func() {
 		stopBackground()
 		<-chatWorkerDone
@@ -189,7 +201,8 @@ func run() error {
 		return err
 	}
 	defer func() { <-resetCron.Stop().Done() }() // waits for a running reset to finish
-	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID)
+	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID,
+		interrogation.WithClientIP(func(r *http.Request) string { return utils.ClientIP(r, cfg.TrustedProxies) }))
 	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID)
 	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID)
 
@@ -255,7 +268,9 @@ func run() error {
 		utils.LogInfo("shutdown signal received; draining requests")
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	// Long enough for an interrogation in flight to finish, so a deploy does not cut
+	// off a paid answer.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), max(shutdownTimeout, cfg.LLMTimeout+5*time.Second))
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return err

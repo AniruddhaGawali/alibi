@@ -35,15 +35,19 @@ func (q *Queries) GetInterrogationCase(ctx context.Context, id string) (GetInter
 	return i, err
 }
 
-const listInterrogationSuspects = `-- name: ListInterrogationSuspects :many
+const getInterrogationSuspect = `-- name: GetInterrogationSuspect :one
 SELECT id, name, role, relationship_to_victim, persona, public_alibi,
        hidden_truth, confession_triggers, is_culprit
 FROM suspects
-WHERE case_id = $1
-ORDER BY display_order, name
+WHERE case_id = $1 AND id = $2
 `
 
-type ListInterrogationSuspectsRow struct {
+type GetInterrogationSuspectParams struct {
+	CaseID string
+	ID     string
+}
+
+type GetInterrogationSuspectRow struct {
 	ID                   string
 	Name                 string
 	Role                 string
@@ -55,27 +59,61 @@ type ListInterrogationSuspectsRow struct {
 	IsCulprit            bool
 }
 
-// Server only: includes the hidden truth and the culprit flag that go into the
-// suspect's own system prompt. Never return these rows to a client.
-func (q *Queries) ListInterrogationSuspects(ctx context.Context, caseID string) ([]ListInterrogationSuspectsRow, error) {
-	rows, err := q.db.Query(ctx, listInterrogationSuspects, caseID)
+// Server only: the one suspect being questioned, with the hidden truth and the
+// culprit flag that go into that suspect's own system prompt. Never return this
+// row to a client, and never load these columns for any other suspect.
+func (q *Queries) GetInterrogationSuspect(ctx context.Context, arg GetInterrogationSuspectParams) (GetInterrogationSuspectRow, error) {
+	row := q.db.QueryRow(ctx, getInterrogationSuspect, arg.CaseID, arg.ID)
+	var i GetInterrogationSuspectRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Role,
+		&i.RelationshipToVictim,
+		&i.Persona,
+		&i.PublicAlibi,
+		&i.HiddenTruth,
+		&i.ConfessionTriggers,
+		&i.IsCulprit,
+	)
+	return i, err
+}
+
+const listInterrogationAcquaintances = `-- name: ListInterrogationAcquaintances :many
+SELECT name, role, relationship_to_victim, persona
+FROM suspects
+WHERE case_id = $1 AND id <> $2
+ORDER BY display_order, name
+`
+
+type ListInterrogationAcquaintancesParams struct {
+	CaseID    string
+	SuspectID string
+}
+
+type ListInterrogationAcquaintancesRow struct {
+	Name                 string
+	Role                 string
+	RelationshipToVictim string
+	Persona              string
+}
+
+// What a suspect may know about the others: public facts only. The secret
+// columns are deliberately not selected, so they cannot reach another prompt.
+func (q *Queries) ListInterrogationAcquaintances(ctx context.Context, arg ListInterrogationAcquaintancesParams) ([]ListInterrogationAcquaintancesRow, error) {
+	rows, err := q.db.Query(ctx, listInterrogationAcquaintances, arg.CaseID, arg.SuspectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListInterrogationSuspectsRow{}
+	items := []ListInterrogationAcquaintancesRow{}
 	for rows.Next() {
-		var i ListInterrogationSuspectsRow
+		var i ListInterrogationAcquaintancesRow
 		if err := rows.Scan(
-			&i.ID,
 			&i.Name,
 			&i.Role,
 			&i.RelationshipToVictim,
 			&i.Persona,
-			&i.PublicAlibi,
-			&i.HiddenTruth,
-			&i.ConfessionTriggers,
-			&i.IsCulprit,
 		); err != nil {
 			return nil, err
 		}

@@ -13,6 +13,8 @@ export interface ChatMessage {
   user_query: string
   ai_response: string
   timestamp: string
+  /** Client only: answered a moment ago, not in the stored history yet. Notes need a stored entry. */
+  pending?: boolean
 }
 
 export interface InterrogateInput {
@@ -26,20 +28,32 @@ export interface InterrogateReply {
   suspect_id: string
   reply: string
   tokens_remaining: number
+  /** The id the exchange gets in the stored history, so it keeps one id from the first render. */
+  message_id: string
 }
 
-/** Ids of exchanges added here before the server's copy exists. */
-const LOCAL_PREFIX = 'local-'
-export const isLocalMessage = (m: Pick<ChatMessage, 'id'>) => m.id.startsWith(LOCAL_PREFIX)
+/** Exchanges answered a moment ago that the server may not have stored yet. */
+export const isPendingMessage = (m: Pick<ChatMessage, 'pending'>) => m.pending === true
+
+/**
+ * Ids of answers received in this tab. They are typed out when they first appear, and
+ * stay marked after the stored copy replaces the local one, so the reveal is not cut short.
+ */
+const freshIds = new Set<string>()
+export const isFreshMessage = (id: string) => freshIds.has(id)
 
 export const chatApi = createApi({
   name: 'chat',
   endpoints: (build) => ({
     /**
      * Ask a suspect a question. Costs one token. The backend answers 422 with an in-character
-     * line when the question is off topic (no token taken), 403 when out of tokens, and
-     * 502/504 when the model fails (token refunded). The roadmap says POST /api/chat; the
-     * built route carries the case and suspect in the path.
+     * line when the question is off topic (no token taken), 429 when out of tokens or over a
+     * rate limit (see `details`), and 502/504 when the model fails (`details.token` says whether
+     * the token was refunded). The roadmap says POST /api/chat; the built route carries the
+     * case and suspect in the path.
+     *
+     * No `invalidatesTags: ['Stats']`: the reply carries `tokens_remaining`, and invalidating
+     * would hold the answer back until the stats had been fetched again.
      */
     interrogate: build.mutation<InterrogateReply, InterrogateInput>({
       query: ({ caseId, suspectId, question }) => ({
@@ -47,7 +61,6 @@ export const chatApi = createApi({
         method: 'POST',
         body: { question },
       }),
-      invalidatesTags: ['Stats'], // the balance changed on the server
     }),
   }),
 })
@@ -69,7 +82,7 @@ function historyQuery(caseId: string, suspectId: string): UseQueryOptions<ChatMe
     queryFn: async () => {
       const server = await apiClient<ChatMessage[]>(`/api/chat/${caseId}/${suspectId}`)
       const waiting = (queryClient.getQueryData<ChatMessage[]>(queryKey) ?? []).filter(
-        (m) => isLocalMessage(m) && !server.some((s) => s.user_query === m.user_query && s.ai_response === m.ai_response),
+        (m) => isPendingMessage(m) && !server.some((s) => s.id === m.id),
       )
       return [...server, ...waiting]
     },
@@ -80,23 +93,41 @@ export function useSuspectChatHistory(caseId: string, suspectId: string) {
   return useQuery(historyQuery(caseId, suspectId))
 }
 
-/** Puts a just-answered exchange at the end of the cached history, so the chat and the logs show it at once. */
-export function appendExchange(input: InterrogateInput, suspectName: string, reply: string): ChatMessage {
+/** How long to wait before asking the server whether an answer has been stored, per attempt. */
+const STORED_CHECK_DELAYS = [2500, 6000, 15000]
+
+/**
+ * Puts a just-answered exchange at the end of the cached history, so the chat and the
+ * logs show it at once. It already has the id it will have in the stored history, so
+ * nothing remounts when the stored copy arrives; the history is refetched a few times
+ * until the storage worker has saved it (notes can only be tied to stored entries).
+ */
+export function appendExchange(input: InterrogateInput, suspectName: string, reply: InterrogateReply): ChatMessage {
   const message: ChatMessage = {
-    id: `${LOCAL_PREFIX}${crypto.randomUUID()}`,
+    id: reply.message_id,
     case_id: input.caseId,
     suspect_id: input.suspectId,
     suspect_name: suspectName,
     user_query: input.question,
-    ai_response: reply,
+    ai_response: reply.reply,
     timestamp: new Date().toISOString(),
+    pending: true,
   }
+  freshIds.add(message.id)
   const key = historyKey(input.caseId, input.suspectId)
   queryClient.setQueryData<ChatMessage[]>(key, (old) => [...(old ?? []), message])
-  // A moment later the storage worker has saved it: refetch so the entry gets its real id
-  // (notes can only be tied to stored entries).
-  setTimeout(() => void queryClient.invalidateQueries({ queryKey: key }), 2500)
+  confirmStored(key, message.id, 0)
   return message
+}
+
+function confirmStored(key: ReturnType<typeof historyKey>, id: string, attempt: number) {
+  const delay = STORED_CHECK_DELAYS[attempt]
+  if (delay === undefined) return
+  setTimeout(async () => {
+    await queryClient.invalidateQueries({ queryKey: key })
+    const stored = queryClient.getQueryData<ChatMessage[]>(key)?.find((m) => m.id === id)
+    if (!stored || isPendingMessage(stored)) confirmStored(key, id, attempt + 1)
+  }, delay)
 }
 
 /**

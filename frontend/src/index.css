@@ -45,6 +45,10 @@
     --color-background: var(--background);
     --color-gold: var(--gold);
     --color-ember: var(--ember);
+    --color-paper: var(--paper);
+    --color-paper-ink: var(--paper-ink);
+    --color-paper-rust: var(--paper-rust);
+    --color-paper-red: var(--paper-red);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -60,6 +64,11 @@
 .dark {
     --gold: oklch(0.82 0.15 85);
     --ember: oklch(0.68 0.19 45);
+    /* Aged case-file paper and the inks written on it (notes, interrogation answers). */
+    --paper: #d8c79c;
+    --paper-ink: #3a2a18;
+    --paper-rust: #5c2c10;
+    --paper-red: #7a1010;
 
     --background: oklch(0.16 0.025 40);
     --foreground: oklch(0.93 0.04 85);
@@ -536,7 +545,7 @@ body::after {
   transform: rotate(1.3deg) translate(5px, 2px);
 }
 .case-sheet {
-  background-color: #d8c79c;
+  background-color: var(--paper);
   background-image:
     /* rust and tea stains */
     radial-gradient(circle at 88% 12%, rgb(150 70 20 / 38%) 0, rgb(150 70 20 / 12%) 9%, transparent 16%),
@@ -545,12 +554,12 @@ body::after {
     /* darker, burnt edges */
     radial-gradient(ellipse at center, transparent 55%, rgb(70 40 15 / 45%) 100%),
     url("data:image/svg+xml;utf8,<svg viewBox='0 0 220 220' xmlns='http://www.w3.org/2000/svg'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='3' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.14'/></svg>");
-  color: #3a2a18;
+  color: var(--paper-ink);
   box-shadow: inset 0 0 28px rgb(80 45 15 / 45%), 0 2px 8px rgb(0 0 0 / 60%);
 }
 .case-sheet h2,
 .case-sheet h3 {
-  color: #5c2c10;
+  color: var(--paper-rust);
 }
 /* steel paper clip clamped over the top-left corner */
 .paper-clip {

@@ -122,6 +122,22 @@ func (q *Queries) ListCaseNotes(ctx context.Context, arg ListCaseNotesParams) ([
 	return items, nil
 }
 
+const lockCaseNotes = `-- name: LockCaseNotes :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text || ':' || $2::text, 0))
+`
+
+type LockCaseNotesParams struct {
+	UserID  string
+	StoryID string
+}
+
+// Serialises note writes of one user for one case until the transaction ends, so
+// parallel requests cannot all pass the @max_notes check of CreateCaseNote.
+func (q *Queries) LockCaseNotes(ctx context.Context, arg LockCaseNotesParams) error {
+	_, err := q.db.Exec(ctx, lockCaseNotes, arg.UserID, arg.StoryID)
+	return err
+}
+
 const suspectInCase = `-- name: SuspectInCase :one
 SELECT EXISTS (SELECT 1 FROM suspects WHERE id = $1 AND case_id = $2) AS found
 `

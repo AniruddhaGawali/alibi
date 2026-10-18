@@ -34,6 +34,16 @@ type Config struct {
 	OpenRouterAPIKey string
 	LLMTimeout       time.Duration // one interrogation call to OpenRouter
 
+	// Limits on the interrogation route (credit protection). 0 turns a limit off
+	// where the minimum allows it.
+	LLMUserPerMinute    int // questions per player per minute, blocked ones included
+	LLMIPPerMinute      int // questions per client address per minute
+	LLMMaxConcurrent    int // model calls in flight per API process
+	LLMRefundsPerDay    int // tokens a player can get back per day after model failures
+	LLMDailyCallBudget  int // model calls per UTC day across all players
+	LLMDailyTokenBudget int // model tokens (prompt + answer) per UTC day across all players
+	LLMStrikesPerHour   int // blocked injection attempts per hour before a player is locked out
+
 	// Token economy and chat storage.
 	DailyTokens           int    // every balance is reset to this (and new accounts start with it); at most 10, the most a player can hold
 	TokenResetCron        string // standard 5-field cron spec for the daily reset
@@ -62,6 +72,7 @@ type Config struct {
 	OTPMaxAttempts   int // wrong codes allowed before the pending signup is discarded
 	AuthIPMax        int // requests per client IP per AuthIPWindow on signup / OTP / login / refresh
 	AuthIPWindow     time.Duration
+	SignupIPDailyMax int          // accounts created per client IP per 24 h
 	LoginMaxFailures int          // wrong passwords per email before login locks (exponential backoff)
 	HashWorkers      int          // max concurrent bcrypt operations; 0 = number of CPUs
 	TrustedProxies   []*net.IPNet // peers whose X-Forwarded-For / X-Real-IP headers are believed
@@ -182,8 +193,16 @@ func load(required []string) (*Config, error) {
 		OTLPEndpoint:     otlpHostPort(envStr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4318")),
 		OllamaHost:       envStr("OLLAMA_HOST", "http://localhost:11434"),
 		CORSOrigins:      parseOrigins(envStr("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
-		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
+		OpenRouterAPIKey: apiKey(os.Getenv("OPENROUTER_API_KEY")),
 		LLMTimeout:       time.Duration(envInt("LLM_TIMEOUT_SECONDS", 20, 1, 120)) * time.Second,
+
+		LLMUserPerMinute:    envInt("LLM_USER_PER_MINUTE", 6, 0, 600),
+		LLMIPPerMinute:      envInt("LLM_IP_PER_MINUTE", 30, 0, 6000),
+		LLMMaxConcurrent:    envInt("LLM_MAX_CONCURRENT", 8, 1, 1000),
+		LLMRefundsPerDay:    envInt("LLM_REFUNDS_PER_DAY", 3, 0, 100),
+		LLMDailyCallBudget:  envInt("LLM_DAILY_CALL_BUDGET", 5000, 0, 100_000_000),
+		LLMDailyTokenBudget: envInt("LLM_DAILY_TOKEN_BUDGET", 3_000_000, 0, 2_000_000_000),
+		LLMStrikesPerHour:   envInt("LLM_INJECTION_STRIKES_PER_HOUR", 5, 0, 1000),
 
 		DailyTokens:           envInt("DAILY_TOKENS", 10, 0, 10),
 		TokenResetCron:        envStr("TOKEN_RESET_CRON", "0 0 * * *"),
@@ -208,6 +227,7 @@ func load(required []string) (*Config, error) {
 		OTPMaxAttempts:   envInt("OTP_MAX_ATTEMPTS", 5, 1, 20),
 		AuthIPMax:        envInt("AUTH_IP_MAX", 60, 1, 100000),
 		AuthIPWindow:     time.Duration(envInt("AUTH_IP_WINDOW_MINUTES", 15, 1, 1440)) * time.Minute,
+		SignupIPDailyMax: envInt("SIGNUP_IP_DAILY_MAX", 10, 1, 100000),
 		LoginMaxFailures: envInt("LOGIN_MAX_FAILURES", 5, 1, 100),
 		HashWorkers:      envInt("BCRYPT_WORKERS", 0, 0, 256),
 		TrustedProxies:   proxies,
@@ -306,4 +326,15 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// apiKey cleans an API key read from the environment. A value that starts with
+// "#" is a comment that ended up as the value (a blank "KEY=   # note" line) and
+// counts as not set.
+func apiKey(v string) string {
+	v = strings.TrimSpace(v)
+	if strings.HasPrefix(v, "#") {
+		return ""
+	}
+	return v
 }

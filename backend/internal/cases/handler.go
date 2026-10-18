@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"backend/pkg/utils"
 	"github.com/google/uuid"
@@ -180,7 +181,7 @@ func (h *Handler) AddNote(w http.ResponseWriter, r *http.Request) {
 	if !utils.BindAndValidate(w, r, &req) {
 		return
 	}
-	body := strings.TrimSpace(req.Body)
+	body := cleanNote(req.Body)
 	if body == "" {
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", map[string]string{"body": "is required"})
 		return
@@ -191,6 +192,7 @@ func (h *Handler) AddNote(w http.ResponseWriter, r *http.Request) {
 		// The entry must be the caller's own, from this case. The note is then about
 		// the suspect of that entry; a different suspect in the request is refused.
 		if h.logs == nil {
+			utils.LogErrorCtx(r.Context(), "note on a log entry refused: chat history is not configured", "user_id", uid, "case_id", id)
 			utils.ErrorResponse(w, http.StatusServiceUnavailable, "Notes on log entries are unavailable right now", nil)
 			return
 		}
@@ -247,4 +249,16 @@ func (h *Handler) DeleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.SuccessResponse(w, http.StatusOK, map[string]string{"message": "note deleted"})
+}
+
+// cleanNote trims a note and drops control characters (NUL included, which
+// Postgres refuses in text) other than line breaks and tabs.
+func cleanNote(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
 }

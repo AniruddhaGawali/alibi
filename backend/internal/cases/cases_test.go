@@ -188,6 +188,7 @@ func TestAddAndListNotes(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty":         `{"body":""}`,
 		"blank":         `{"body":"    "}`,
+		"only nul":      `{"body":"\u0000\u0007"}`,
 		"too long":      `{"body":"` + strings.Repeat("x", 1001) + `"}`,
 		"bad suspect":   `{"body":"hi","suspect_id":"nope"}`,
 		"unknown field": `{"body":"hi","user_id":"x"}`,
@@ -195,6 +196,10 @@ func TestAddAndListNotes(t *testing.T) {
 		if rec := notesReq(h.AddNote, "POST", body); rec.Code != 422 && rec.Code != 400 {
 			t.Errorf("%s: %d", name, rec.Code)
 		}
+	}
+	// Control characters (NUL is refused by Postgres) are dropped before saving.
+	if rec := notesReq(h.AddNote, "POST", `{"body":"a\u0000b\u0007c"}`); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"body":"abc"`) {
+		t.Fatalf("control characters: %d %s", rec.Code, rec.Body)
 	}
 	st.notesErr = ErrBadSuspect
 	if rec := notesReq(h.AddNote, "POST", `{"body":"hi"}`); rec.Code != 422 {

@@ -122,7 +122,7 @@ func (s *Service) ResetAll(ctx context.Context, tokens int64) (int64, error) {
 	return changed, nil
 }
 
-// ClearCache deletes every cached balance (user:coins:*) and returns how many.
+// ClearCache removes every cached balance (user:coins:*) and returns how many.
 func (s *Service) ClearCache(ctx context.Context) (int64, error) {
 	var cleared int64
 	batch := make([]string, 0, 500)
@@ -130,7 +130,7 @@ func (s *Service) ClearCache(ctx context.Context) (int64, error) {
 		if len(batch) == 0 {
 			return nil
 		}
-		n, err := s.rdb.Del(ctx, batch...).Result()
+		n, err := s.rdb.Unlink(ctx, batch...).Result() // UNLINK frees the memory in the background
 		cleared += n
 		batch = batch[:0]
 		return err

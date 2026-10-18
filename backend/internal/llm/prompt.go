@@ -92,9 +92,9 @@ func writeAcquaintances(b *strings.Builder, p Persona, others []Acquaintance) {
 	}
 	fmt.Fprintf(b, "\n## The other people in this case\n")
 	fmt.Fprintf(b, "You know these people personally and can mention them naturally when it fits: what they are like, "+
-		"where you believe they were, and whom you trust or suspect. Your opinions of them come from your own personality, "+
-		"your relationship with them and what you saw. You do not know their secrets, so do not invent confessions or "+
-		"evidence for them, and never claim to know who the killer is.\n")
+		"and whom you trust or suspect. Your opinions of them come from your own personality, "+
+		"your relationship with them and what you saw. You do not know where they were or what they hid, so do not invent "+
+		"whereabouts, confessions or evidence for them, and never claim to know who the killer is.\n")
 	for _, o := range others {
 		if o.Name == p.Name {
 			continue

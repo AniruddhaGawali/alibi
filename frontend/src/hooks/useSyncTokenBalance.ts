@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useGetStatsQuery } from '@/api/dashboard'
 import { useGameStore } from '@/store/useGameStore'
+import { useSessionStore } from '@/store/useSessionStore'
 
 /**
  * Mirrors the server's token balance into `useGameStore`, so the navbar, the stats
@@ -9,7 +10,8 @@ import { useGameStore } from '@/store/useGameStore'
  * figure changes (a refetch after a question, the daily reset) it wins again.
  */
 export function useSyncTokenBalance() {
-  const { data } = useGetStatsQuery()
+  const loggedIn = useSessionStore((s) => s.loggedIn)
+  const { data } = useGetStatsQuery(undefined, { enabled: loggedIn }) // visitors on /login would only collect a 401
   const setTokenBalance = useGameStore((s) => s.setTokenBalance)
   const tokens = data?.tokens
   useEffect(() => {

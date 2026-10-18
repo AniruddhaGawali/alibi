@@ -5,6 +5,11 @@ FROM case_notes
 WHERE user_id = @user_id AND story_id = @story_id
 ORDER BY created_at DESC, id;
 
+-- name: LockCaseNotes :exec
+-- Serialises note writes of one user for one case until the transaction ends, so
+-- parallel requests cannot all pass the @max_notes check of CreateCaseNote.
+SELECT pg_advisory_xact_lock(hashtextextended(@user_id::text || ':' || @story_id::text, 0));
+
 -- name: CreateCaseNote :one
 -- Adds a note unless the user already has @max_notes for this case (no row is
 -- returned then). The suspect, if any, must already be checked with SuspectInCase,

@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ApiError } from '@/api/apiClient'
-import { appendExchange, isLocalMessage, useInterrogateMutation, useSuspectChatHistory } from '@/api/chat'
+import { appendExchange, isFreshMessage, useInterrogateMutation, useSuspectChatHistory } from '@/api/chat'
+import { invalidateTags } from '@/api/createApi'
+import { queryClient } from '@/api/queryClient'
 import type { Suspect } from '@/api/cases'
 import { useStickToBottom } from '@/hooks/useStickToBottom'
 import { useGameStore } from '@/store/useGameStore'
@@ -24,7 +26,8 @@ interface Attempt {
  * The interrogation of one suspect: their stored conversation, a thinking indicator
  * while the model answers, and the question box. Sending a question takes a token at
  * once (the counter drops before the network call finishes) and gives it back if the
- * question is rejected or the model fails.
+ * question is rejected, or the server says it refunded it. When the server kept the
+ * token, or the outcome is unknown (network error), the balance is read again.
  */
 export default function ChatWindow({ caseId, suspect }: { caseId: string; suspect: Suspect }) {
   const { data: history, isPending, error } = useSuspectChatHistory(caseId, suspect.id)
@@ -36,11 +39,13 @@ export default function ChatWindow({ caseId, suspect }: { caseId: string; suspec
     onMutate: () => adjustTokens(-1), // optimistic: pay now, settle when the server answers
     onSuccess: (res, input) => {
       setTokens(res.tokens_remaining)
-      appendExchange(input, suspect.name, res.reply)
+      appendExchange(input, suspect.name, res)
     },
     onError: (err, input) => {
       const api = err instanceof ApiError ? err : null
-      if (api?.status === 403 && isOutOfTokens(api)) setTokens(0)
+      const details = api?.details as { tokens?: string; token?: string } | undefined
+      if (details?.tokens === 'out_of_tokens') setTokens(0)
+      else if (details?.token === 'spent' || !api) void invalidateTags(queryClient, ['Stats']) // kept, or unknown: ask the server
       else adjustTokens(1) // the server took nothing, or refunded it
       play('error')
       const blocked = api?.status === 422 && (api.details as { question?: string } | undefined)?.question === 'off_topic'
@@ -53,7 +58,7 @@ export default function ChatWindow({ caseId, suspect }: { caseId: string; suspec
 
   type Line = { id: string; at: number; question: string; kind: 'ok' | 'blocked' | 'error'; text: string; fresh: boolean }
   const lines: Line[] = [
-    ...(history ?? []).map((m): Line => ({ id: m.id, at: Date.parse(m.timestamp), question: m.user_query, kind: 'ok', text: m.ai_response, fresh: isLocalMessage(m) })),
+    ...(history ?? []).map((m): Line => ({ id: m.id, at: Date.parse(m.timestamp), question: m.user_query, kind: 'ok', text: m.ai_response, fresh: isFreshMessage(m.id) })),
     ...attempts.map((a): Line => ({ ...a, fresh: true })),
   ].sort((a, b) => a.at - b.at)
 
@@ -109,5 +114,3 @@ export default function ChatWindow({ caseId, suspect }: { caseId: string; suspec
     </div>
   )
 }
-
-const isOutOfTokens = (e: ApiError) => (e.details as { tokens?: string } | undefined)?.tokens === 'out_of_tokens'

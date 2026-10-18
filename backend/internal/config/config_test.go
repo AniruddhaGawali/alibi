@@ -127,3 +127,15 @@ func TestEnvExampleIsSafeToCopy(t *testing.T) {
 		t.Errorf("example Supabase settings rejected: %v", err)
 	}
 }
+
+func TestAPIKeyIgnoresACommentThatBecameTheValue(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                 "",
+		"  sk-or-v1-abc  ": "sk-or-v1-abc",
+		"# interrogations; without it the endpoint answers 503": "",
+	} {
+		if got := apiKey(in); got != want {
+			t.Errorf("apiKey(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

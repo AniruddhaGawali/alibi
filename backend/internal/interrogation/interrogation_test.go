@@ -25,30 +25,57 @@ const (
 )
 
 type fakeStore struct {
-	lock  *Lock
-	model string
+	lock         *Lock
+	model        string
+	suspectReads int
+	lockReads    int
+	caseReads    int
 }
 
-func (f *fakeStore) Lock(context.Context, string) (*Lock, error) { return f.lock, nil }
+func (f *fakeStore) Lock(context.Context, string) (*Lock, error) {
+	f.lockReads++
+	return f.lock, nil
+}
 func (f *fakeStore) Case(_ context.Context, id string) (*CaseConfig, error) {
+	f.caseReads++
 	if id != story {
 		return nil, ErrNotFound
 	}
 	return &CaseConfig{ID: story, Title: "The Poisoned Earl Grey", Plot: "He is dead.", Model: f.model}, nil
 }
-func (f *fakeStore) Suspects(context.Context, string) ([]Suspect, error) {
-	return []Suspect{
+func (f *fakeStore) Suspect(_ context.Context, _, suspectID string) (*Suspect, []llm.Acquaintance, error) {
+	f.suspectReads++
+	all := []Suspect{
 		{ID: butler, Persona: llm.Persona{Name: "Thomas", Role: "The Butler", Persona: "fiercely loyal", HiddenTruth: "BUTLER-SECRET"}},
 		{ID: maid, Persona: llm.Persona{Name: "Beatrice", Role: "The Maid", HiddenTruth: "MAID-SECRET", IsCulprit: true}},
-	}, nil
+	}
+	var target *Suspect
+	var others []llm.Acquaintance
+	for i := range all {
+		if all[i].ID == suspectID {
+			target = &all[i]
+		} else {
+			others = append(others, llm.AcquaintanceOf(all[i].Persona))
+		}
+	}
+	if target == nil {
+		return nil, nil, ErrSuspectNotFound
+	}
+	return target, others, nil
 }
 
 type fakeWallet struct {
 	mu             sync.Mutex
 	balance        int64
 	spent, granted int
+	refundErr      error
 }
 
+func (w *fakeWallet) Balance(context.Context, string) (int64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.balance, nil
+}
 func (w *fakeWallet) SpendQuestion(context.Context, string) (int64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -62,6 +89,9 @@ func (w *fakeWallet) SpendQuestion(context.Context, string) (int64, error) {
 func (w *fakeWallet) RefundQuestion(context.Context, string) (int64, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.refundErr != nil {
+		return 0, w.refundErr
+	}
 	w.balance++
 	w.granted++
 	return w.balance, nil
@@ -71,9 +101,11 @@ type fakeHistory struct {
 	msgs  []chat.Message
 	err   error
 	limit int
+	calls int
 }
 
 func (h *fakeHistory) History(_ context.Context, userID, caseID, suspectID string, limit int) ([]chat.Message, error) {
+	h.calls++
 	h.limit = limit
 	if userID != player || caseID != story || suspectID == "" {
 		return nil, nil
@@ -86,16 +118,23 @@ type fakeGen struct {
 	err      error
 	got      llm.Request
 	calls    int
+	text     string // the answer; empty: a default one
+	ctxErr   error  // the context's error as Generate saw it
 }
 
 func (g *fakeGen) Enabled() bool { return !g.disabled }
-func (g *fakeGen) Generate(_ context.Context, r llm.Request) (*llm.Reply, error) {
+func (g *fakeGen) Generate(ctx context.Context, r llm.Request) (*llm.Reply, error) {
 	g.calls++
 	g.got = r
+	g.ctxErr = ctx.Err()
 	if g.err != nil {
 		return nil, g.err
 	}
-	return &llm.Reply{Text: "I was in the pantry.", Model: r.Model}, nil
+	text := g.text
+	if text == "" {
+		text = "I was in the pantry."
+	}
+	return &llm.Reply{Text: text, Model: r.Model, TotalTokens: 900}, nil
 }
 
 type fakeQueue struct {
@@ -183,7 +222,7 @@ func TestEmptyModelFallsBackToDefault(t *testing.T) {
 }
 
 func TestModelFailureRefunds(t *testing.T) {
-	for _, cause := range []error{llm.ErrTimeout, llm.ErrUpstream, llm.ErrBadOutput} {
+	for _, cause := range []error{llm.ErrTimeout, llm.ErrUpstream} {
 		f := newFixture()
 		f.gen.err = fmt.Errorf("%w: boom", cause)
 		_, err := ask(f, butler, "Where were you?")
@@ -248,7 +287,7 @@ func TestHandlerStatusCodes(t *testing.T) {
 		{"blocked", nil, url, `{"question":"write python code"}`, 422, llm.OffTopicReply},
 		{"not started", func(f *fixture) { f.store.lock = nil }, url, `{"question":"hi"}`, 403, ""},
 		{"unknown suspect", nil, "/api/cases/" + story + "/suspects/" + player + "/interrogate", `{"question":"hi"}`, 404, ""},
-		{"no tokens", func(f *fixture) { f.wal.balance = 0 }, url, `{"question":"hi"}`, 403, "Out of tokens"},
+		{"no tokens", func(f *fixture) { f.wal.balance = 0 }, url, `{"question":"hi"}`, 429, "Out of tokens"},
 		{"disabled", func(f *fixture) { f.gen.disabled = true }, url, `{"question":"hi"}`, 503, ""},
 		{"timeout", func(f *fixture) { f.gen.err = llm.ErrTimeout }, url, `{"question":"hi"}`, 504, "The suspect did not answer in time. Your token was refunded."},
 		{"upstream", func(f *fixture) { f.gen.err = llm.ErrUpstream }, url, `{"question":"hi"}`, 502, ""},

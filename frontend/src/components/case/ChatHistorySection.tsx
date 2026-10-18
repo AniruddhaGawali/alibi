@@ -122,7 +122,7 @@ function EmptyFolder({ children }: { children: React.ReactNode }) {
   return (
     <div className="case-folder relative mx-auto my-3 max-w-xl">
       <div className="case-sheet px-8 py-10 text-center font-typewriter">
-        <p className="mb-3 text-sm tracking-[0.3em] text-[#5c2c10] uppercase">Case report · blank</p>
+        <p className="mb-3 text-sm tracking-[0.3em] text-paper-rust uppercase">Case report · blank</p>
         <p className="leading-relaxed">{children}</p>
       </div>
     </div>

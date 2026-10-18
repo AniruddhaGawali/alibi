@@ -48,14 +48,21 @@ func TestPGStore(t *testing.T) {
 	if _, err := s.Case(ctx, hidden); !errors.Is(err, interrogation.ErrNotFound) {
 		t.Fatalf("unpublished case: %v", err)
 	}
-	sus, err := s.Suspects(ctx, story)
-	if err != nil || len(sus) != 2 || sus[0].Name != "Thomas" || sus[1].Name != "Beatrice" {
-		t.Fatalf("suspects: %+v %v", sus, err)
+	var beatriceID string
+	if err := pool.QueryRow(ctx, "SELECT id FROM suspects WHERE case_id = $1 AND name = 'Beatrice'", story).Scan(&beatriceID); err != nil {
+		t.Fatal(err)
 	}
-	b := sus[1].Persona
+	target, others, err := s.Suspect(ctx, story, beatriceID)
+	if err != nil || target.Name != "Beatrice" || len(others) != 1 || others[0].Name != "Thomas" || others[0].Role != "The Butler" {
+		t.Fatalf("suspect: %+v %+v %v", target, others, err)
+	}
+	b := target.Persona
 	if !b.IsCulprit || b.Relationship != "his maid" || b.Persona != "quiet" || b.PublicAlibi != "upstairs" ||
 		b.HiddenTruth != "did it" || b.ConfessionTriggers != "asked who was last" {
 		t.Fatalf("persona: %+v", b)
+	}
+	if _, _, err := s.Suspect(ctx, story, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"); !errors.Is(err, interrogation.ErrSuspectNotFound) {
+		t.Fatalf("unknown suspect: %v", err)
 	}
 
 	u, err := user.NewPGStore(pool).Create(ctx, "ann", "ann@example.com", "hash", 10)

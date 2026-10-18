@@ -51,7 +51,7 @@ type createCaseReq struct {
 	Title           string `json:"title" validate:"required,max=200"`
 	Synopsis        string `json:"synopsis" validate:"required,max=2000"`
 	MainPlot        string `json:"main_plot" validate:"max=10000"`
-	ThumbnailURL    string `json:"thumbnail_url" validate:"omitempty,url,max=2048"`
+	ThumbnailURL    string `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
 	DifficultyLevel string `json:"difficulty_level" validate:"required,oneof=easy medium hard"`
 	RewardTrophies  int32  `json:"reward_trophies" validate:"min=0,max=1000"`
 	IsPublished     bool   `json:"is_published"`                           // false (a draft) when left out
@@ -62,7 +62,7 @@ type updateCaseReq struct {
 	Title           *string `json:"title" validate:"omitempty,min=1,max=200"`
 	Synopsis        *string `json:"synopsis" validate:"omitempty,min=1,max=2000"`
 	MainPlot        *string `json:"main_plot" validate:"omitempty,max=10000"`
-	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,url,max=2048"`
+	ThumbnailURL    *string `json:"thumbnail_url" validate:"omitempty,https_url,max=2048"`
 	DifficultyLevel *string `json:"difficulty_level" validate:"omitempty,oneof=easy medium hard"`
 	RewardTrophies  *int32  `json:"reward_trophies" validate:"omitempty,min=0,max=1000"`
 	IsPublished     *bool   `json:"is_published"`
@@ -158,6 +158,8 @@ func (h *Handler) checkModel(w http.ResponseWriter, r *http.Request, model strin
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", map[string]string{"llm_model": "OpenRouter has no model with this id"})
 	case errors.Is(err, llm.ErrNotTextOnly):
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", map[string]string{"llm_model": "the model must output text only"})
+	case errors.Is(err, llm.ErrTooExpensive):
+		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", map[string]string{"llm_model": "the model costs too much per token for interrogations"})
 	default:
 		utils.LogErrorCtx(r.Context(), "model check failed", "llm_model", model, "err", err)
 		utils.ErrorResponse(w, http.StatusServiceUnavailable, "could not verify the model with OpenRouter", nil)

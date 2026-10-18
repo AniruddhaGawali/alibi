@@ -20,9 +20,14 @@ type Resetter interface {
 
 const (
 	resetTimeout = 2 * time.Minute
-	// lockTTL outlives the day it guards, so a second replica (or a restarted one
-	// whose clock is slightly off) can never run the same day's reset again.
-	lockTTL = 48 * time.Hour
+	// lockTTL is how long a run that died mid-way (SIGKILL, OOM) keeps others out;
+	// a normal run releases it as soon as it ends.
+	lockTTL = resetTimeout + time.Minute
+	// doneTTL outlives the day a finished reset is recorded for, so a second replica
+	// (or a restarted one whose clock is slightly off) never runs the same day twice.
+	doneTTL = 48 * time.Hour
+	// catchUpEvery is how often the API checks that today's reset has happened.
+	catchUpEvery = 10 * time.Minute
 	// attempts is how many times the Postgres reset is tried before giving up.
 	attempts = 3
 	// secondSweep clears the cache again shortly after the reset, in case a
@@ -39,13 +44,23 @@ type TokenReset struct {
 	Wallet Resetter
 	Redis  *redis.Client
 	Loc    *time.Location
+	Sched  cron.Schedule // when the reset is due; nil: CatchUp does nothing
 	now    func() time.Time
 	sleep  func(time.Duration)
 }
 
-// Run is the cron job. Every API replica schedules it, so a Redis lock keyed by
-// the calendar day (in Loc) makes sure the reset runs once per day across all of
-// them, for all users in a single update. A failed run releases the lock.
+// Run is the cron job. Every API replica schedules it, so Redis keys by the
+// calendar day (in Loc) make sure the reset runs once per day across all of them,
+// for all users in a single update:
+//
+//   - done:cron:token-reset:<day> is written after a successful reset and stops any
+//     later run that day;
+//   - lock:cron:token-reset:<day> only keeps two runs from overlapping. It is
+//     released when the run ends, and expires on its own if the process dies
+//     mid-run, so a crash never skips the day.
+//
+// A failed run releases the lock and writes no done marker, so the next catch-up
+// check (CatchUp) tries again.
 func (j *TokenReset) Run() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -64,15 +79,31 @@ func (j *TokenReset) Run() {
 
 	day := now().In(j.Loc).Format(time.DateOnly)
 	lock := "lock:cron:token-reset:" + day
+	done := "done:cron:token-reset:" + day
+	finished, err := j.Redis.Exists(ctx, done).Result()
+	if err != nil {
+		utils.LogError("token reset: done check failed; skipping this run", "day", day, "err", err)
+		return
+	}
+	if finished > 0 {
+		utils.LogInfo("token reset: already done for today", "day", day)
+		return
+	}
 	ok, err := j.Redis.SetNX(ctx, lock, "1", lockTTL).Result()
 	if err != nil {
 		utils.LogError("token reset: lock failed; skipping this run", "day", day, "err", err)
 		return
 	}
 	if !ok {
-		utils.LogInfo("token reset: already done or running for today", "day", day)
+		utils.LogInfo("token reset: already running", "day", day)
 		return
 	}
+	// Always give the lock back, also after a recovered panic.
+	defer func() {
+		if err := j.Redis.Del(context.WithoutCancel(ctx), lock).Err(); err != nil {
+			utils.LogError("token reset: could not release the lock", "day", day, "err", err)
+		}
+	}()
 
 	var resetErr error
 	for i := 1; i <= attempts; i++ {
@@ -85,16 +116,41 @@ func (j *TokenReset) Run() {
 		}
 	}
 	if resetErr != nil {
-		// Give the lock back so a manual run (or another replica's retry) can still do today's reset.
-		if err := j.Redis.Del(context.WithoutCancel(ctx), lock).Err(); err != nil {
-			utils.LogError("token reset: could not release the lock", "day", day, "err", err)
-		}
-		return
+		return // no done marker: a later catch-up check (or another replica) tries again
+	}
+	if err := j.Redis.Set(context.WithoutCancel(ctx), done, "1", doneTTL).Err(); err != nil {
+		utils.LogError("token reset: could not record the day as done", "day", day, "err", err)
 	}
 	sleep(secondSweep)
 	if _, err := j.Wallet.ClearCache(ctx); err != nil {
 		utils.LogError("token reset: second cache sweep failed", "day", day, "err", err)
 	}
+}
+
+// due reports whether today's reset time (in Loc) has already passed.
+func (j *TokenReset) due(now time.Time) bool {
+	if j.Sched == nil {
+		return false
+	}
+	local := now.In(j.Loc)
+	midnight := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, j.Loc)
+	first := j.Sched.Next(midnight.Add(-time.Second))
+	return !first.After(local) && first.Before(midnight.AddDate(0, 0, 1))
+}
+
+// CatchUp runs the reset when it is due today but has not happened: the API was
+// down or asleep at the cron minute, or an earlier run failed. robfig/cron does
+// not replay missed runs, so this is what makes the reset self-healing. It runs
+// at startup and every catchUpEvery.
+func (j *TokenReset) CatchUp() {
+	now := time.Now
+	if j.now != nil {
+		now = j.now
+	}
+	if !j.due(now()) {
+		return
+	}
+	j.Run() // does nothing when today is already done
 }
 
 // StartTokenReset schedules the daily reset with a standard 5-field cron spec
@@ -110,8 +166,11 @@ func StartTokenReset(spec, tz string, tokens int, w Resetter, rdb *redis.Client)
 		return nil, fmt.Errorf("TOKEN_RESET_CRON %q: %w", spec, err)
 	}
 	c := cron.New(cron.WithLocation(loc))
-	c.Schedule(sched, &TokenReset{Tokens: int64(tokens), Wallet: w, Redis: rdb, Loc: loc})
+	job := &TokenReset{Tokens: int64(tokens), Wallet: w, Redis: rdb, Loc: loc, Sched: sched}
+	c.Schedule(sched, job)
+	c.Schedule(cron.Every(catchUpEvery), cron.FuncJob(job.CatchUp)) // heals a missed or failed run
 	c.Start()
+	go job.CatchUp() // the API may have been down at the cron minute
 	utils.LogInfo("token reset scheduled", "cron", spec, "timezone", tz, "tokens", tokens,
 		"next_run", sched.Next(time.Now().In(loc)))
 	return c, nil

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 
 	"backend/internal/cases"
@@ -170,6 +171,32 @@ func TestPGStore(t *testing.T) {
 	}
 	if _, err := store.AddNote(ctx, u.ID, story, nil, nil, "one too many"); !errors.Is(err, cases.ErrNotesFull) {
 		t.Fatalf("over the cap: %v", err)
+	}
+	// parallel requests at 199 notes cannot all get in
+	for i := 0; i < cases.MaxNotesPerCase-1; i++ {
+		if _, err := store.AddNote(ctx, u2.ID, story, nil, nil, "n"); err != nil {
+			t.Fatalf("u2 note %d: %v", i, err)
+		}
+	}
+	var (
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		created int
+	)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := store.AddNote(ctx, u2.ID, story, nil, nil, "race"); err == nil {
+				mu.Lock()
+				created++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if created != 1 {
+		t.Fatalf("%d parallel notes got past the cap, want 1", created)
 	}
 	// removing a suspect keeps the note, untied
 	if _, err := pool.Exec(ctx, `DELETE FROM suspects WHERE id = $1`, suspectID); err != nil {

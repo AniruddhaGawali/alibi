@@ -47,34 +47,58 @@ interface RefreshedTokens {
 let refreshing: Promise<boolean> | null = null
 
 /**
+ * Runs fn while holding a lock shared by every tab of the browser, so two tabs never
+ * rotate the refresh token at the same moment. Without the Web Locks API it just runs.
+ */
+function withTabLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined
+  return locks ? locks.request('alibi-refresh', fn) : fn()
+}
+
+const REJECTED = [400, 401, 403, 422]
+
+/**
  * Trades the refresh token for a new pair and stores it. Resolves true when the
  * session is renewed. When the server rejects the refresh token it signs the user out
  * (once, however many requests were waiting) and resolves false. A network failure or
  * server error also resolves false but leaves the session alone.
+ *
+ * `stale` is the access token the caller just found expired (null when its cookie is
+ * gone). The cookies are shared by all tabs, so by the time this tab holds the lock
+ * another tab may already have renewed: a different access token then means the work
+ * is done. A rejection is only believed when the refresh cookie is still the one that
+ * was sent; if it changed, another tab rotated it and this tab retries with the new one.
  */
-function renew(): Promise<boolean> {
-  refreshing ??= (async () => {
-    const refresh = getRefreshToken()
-    if (!refresh) return false
+function renew(stale: string | null): Promise<boolean> {
+  refreshing ??= withTabLock(async () => {
+    const fresh = getJwt()
+    if (fresh && fresh !== stale) return true // another tab renewed while this one waited
     try {
-      const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ refresh_token: refresh }),
-      })
-      if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 422) {
-        onSessionExpired?.()
-        return false
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const refresh = getRefreshToken()
+        if (!refresh) return false
+        const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ refresh_token: refresh }),
+        })
+        if (REJECTED.includes(res.status)) {
+          const current = getRefreshToken()
+          if (current && current !== refresh) continue // rotated by another tab: try its token
+          onSessionExpired?.()
+          return false
+        }
+        const body: Envelope<RefreshedTokens> | null = await res.json().catch(() => null)
+        if (!res.ok || body?.status !== 'success' || !body.data) return false
+        saveJwt(body.data.jwt_token, { maxAgeSeconds: body.data.expires_in })
+        saveRefreshToken(body.data.refresh_token)
+        return true
       }
-      const body: Envelope<RefreshedTokens> | null = await res.json().catch(() => null)
-      if (!res.ok || body?.status !== 'success' || !body.data) return false
-      saveJwt(body.data.jwt_token, { maxAgeSeconds: body.data.expires_in })
-      saveRefreshToken(body.data.refresh_token)
-      return true
+      return false
     } catch {
       return false
     }
-  })().finally(() => {
+  }).finally(() => {
     refreshing = null
   })
   return refreshing
@@ -88,7 +112,7 @@ function renew(): Promise<boolean> {
  */
 export async function ensureAccessToken(): Promise<boolean> {
   if (getJwt()) return true
-  return getRefreshToken() ? renew() : false
+  return getRefreshToken() ? renew(null) : false
 }
 
 function send(path: string, init: RequestInit): Promise<Response> {
@@ -112,7 +136,7 @@ export async function apiClient<T>(path: string, init: RequestInit = {}): Promis
   const canRefresh = !NO_REFRESH_PATHS.includes(path)
 
   // The access cookie is gone but the refresh token is not: renew before even trying.
-  if (canRefresh && !getJwt() && getRefreshToken() && !(await renew())) {
+  if (canRefresh && !getJwt() && getRefreshToken() && !(await renew(null))) {
     throw new ApiError(401, 'Your session has expired. Please log in again.')
   }
   const tokenUsed = getJwt()
@@ -121,7 +145,7 @@ export async function apiClient<T>(path: string, init: RequestInit = {}): Promis
   if (res.status === 401 && canRefresh) {
     // Another tab may have renewed the session already: its new token is in the cookie.
     const current = getJwt()
-    if ((current && current !== tokenUsed) || (await renew())) {
+    if ((current && current !== tokenUsed) || (await renew(tokenUsed))) {
       res = await send(path, init)
     }
   }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/OpenRouterTeam/go-sdk/models/components"
@@ -41,7 +42,23 @@ var (
 	ErrUnknownModel = errors.New("llm: model not found on OpenRouter")
 	// ErrNotTextOnly means the model can produce something other than text (images, audio).
 	ErrNotTextOnly = errors.New("llm: model must output text only")
+	// ErrTooExpensive means the model costs more per token than MaxPricePerMillion allows.
+	ErrTooExpensive = errors.New("llm: model is too expensive for interrogations")
 )
+
+// MaxPricePerMillion is the most (USD per million tokens, prompt or answer) a case's
+// model may cost, so an admin typo cannot pick a model that drains the OpenRouter credit.
+const MaxPricePerMillion = 5.0
+
+// tooExpensive reports whether a per-token USD price string is above MaxPricePerMillion.
+// An unparsable price counts as too expensive.
+func tooExpensive(perToken string) bool {
+	if perToken == "" {
+		return false
+	}
+	v, err := strconv.ParseFloat(perToken, 64)
+	return err != nil || v < 0 || v*1_000_000 > MaxPricePerMillion
+}
 
 // CheckTextModel asks OpenRouter whether model exists and outputs text only, so an
 // admin cannot assign an image or audio generator to a case. It returns
@@ -64,10 +81,13 @@ func (c *Clients) CheckTextModel(ctx context.Context, model string) error {
 			continue
 		}
 		out := m.Architecture.OutputModalities
-		if len(out) == 1 && out[0] == components.OutputModalityText {
-			return nil
+		if len(out) != 1 || out[0] != components.OutputModalityText {
+			return ErrNotTextOnly
 		}
-		return ErrNotTextOnly
+		if tooExpensive(m.Pricing.Prompt) || tooExpensive(m.Pricing.Completion) {
+			return ErrTooExpensive
+		}
+		return nil
 	}
 	return ErrUnknownModel
 }

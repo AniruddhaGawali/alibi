@@ -97,6 +97,7 @@ func TestCreateCaseModel(t *testing.T) {
 		"web search suffix": {newCase + `,"llm_model":"google/gemma-4-31b-it:online"}`, &fakeModels{}, 422},
 		"router model":      {newCase + `,"llm_model":"openrouter/auto"}`, &fakeModels{}, 422},
 		"image model":       {newCase + `,"llm_model":"google/gemini-2.5-flash-image"}`, &fakeModels{err: llm.ErrNotTextOnly}, 422},
+		"expensive model":   {newCase + `,"llm_model":"big/pricey"}`, &fakeModels{err: llm.ErrTooExpensive}, 422},
 		"unknown model":     {newCase + `,"llm_model":"nobody/nothing"}`, &fakeModels{err: llm.ErrUnknownModel}, 422},
 		"openrouter down":   {newCase + `,"llm_model":"a/b"}`, &fakeModels{err: context.DeadlineExceeded}, 503},
 		"bad difficulty":    {`{"title":"T","synopsis":"S","difficulty_level":"insane"}`, &fakeModels{}, 422},

@@ -6,6 +6,7 @@ package interrogation
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"backend/internal/db/dbgen"
 	"backend/internal/llm"
@@ -42,8 +43,10 @@ type Store interface {
 	Lock(ctx context.Context, userID string) (*Lock, error)
 	// Case returns ErrNotFound for an unknown or unpublished case.
 	Case(ctx context.Context, storyID string) (*CaseConfig, error)
-	// Suspects returns every suspect of the case, secrets included.
-	Suspects(ctx context.Context, storyID string) ([]Suspect, error)
+	// Suspect returns the suspect being questioned, with their secrets, and the public
+	// profile of every other suspect of the case. Only this one suspect's secrets are
+	// loaded. It returns ErrSuspectNotFound when the suspect is not in the case.
+	Suspect(ctx context.Context, storyID, suspectID string) (*Suspect, []llm.Acquaintance, error)
 }
 
 // PGStore implements Store. All SQL is in sql/queries/interrogation.sql (sqlc).
@@ -73,18 +76,25 @@ func (s *PGStore) Case(ctx context.Context, storyID string) (*CaseConfig, error)
 	return &CaseConfig{ID: row.ID, Title: row.Title, Plot: row.MainPlot, Model: row.LlmModel}, nil
 }
 
-func (s *PGStore) Suspects(ctx context.Context, storyID string) ([]Suspect, error) {
-	rows, err := s.q.ListInterrogationSuspects(ctx, storyID)
+func (s *PGStore) Suspect(ctx context.Context, storyID, suspectID string) (*Suspect, []llm.Acquaintance, error) {
+	r, err := s.q.GetInterrogationSuspect(ctx, dbgen.GetInterrogationSuspectParams{CaseID: storyID, ID: suspectID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, ErrSuspectNotFound
+	}
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("load suspect: %w", err)
 	}
-	out := make([]Suspect, len(rows))
-	for i, r := range rows {
-		out[i] = Suspect{ID: r.ID, Persona: llm.Persona{
-			Name: r.Name, Role: r.Role, Relationship: r.RelationshipToVictim, Persona: r.Persona,
-			PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth, ConfessionTriggers: r.ConfessionTriggers,
-			IsCulprit: r.IsCulprit,
-		}}
+	rows, err := s.q.ListInterrogationAcquaintances(ctx, dbgen.ListInterrogationAcquaintancesParams{CaseID: storyID, SuspectID: suspectID})
+	if err != nil {
+		return nil, nil, fmt.Errorf("load acquaintances: %w", err)
 	}
-	return out, nil
+	others := make([]llm.Acquaintance, len(rows))
+	for i, o := range rows {
+		others[i] = llm.Acquaintance{Name: o.Name, Role: o.Role, Relationship: o.RelationshipToVictim, Persona: o.Persona}
+	}
+	return &Suspect{ID: r.ID, Persona: llm.Persona{
+		Name: r.Name, Role: r.Role, Relationship: r.RelationshipToVictim, Persona: r.Persona,
+		PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth, ConfessionTriggers: r.ConfessionTriggers,
+		IsCulprit: r.IsCulprit,
+	}}, others, nil
 }

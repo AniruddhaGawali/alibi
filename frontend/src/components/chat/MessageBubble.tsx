@@ -53,7 +53,7 @@ export default function MessageBubble({ from, text, label, avatarUrl, animate = 
         {label && <span className="text-xs text-muted-foreground">{label}</span>}
         <p
           className={cn(
-            'case-sheet relative px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap after:absolute after:top-2.5 after:-left-1.5 after:border-y-[6px] after:border-r-[8px] after:border-y-transparent after:border-r-[#d8c79c]',
+            'case-sheet relative px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap after:absolute after:top-2.5 after:-left-1.5 after:border-y-[6px] after:border-r-[8px] after:border-y-transparent after:border-r-paper',
             blocked && 'border-l-4 border-destructive',
           )}
         >
