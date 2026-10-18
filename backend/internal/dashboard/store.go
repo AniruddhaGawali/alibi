@@ -29,7 +29,6 @@ type Story struct {
 	ThumbnailURL    string `json:"thumbnail_url"`
 	DifficultyLevel string `json:"difficulty_level"`
 	RewardTrophies  int    `json:"reward_trophies"`
-	RewardTokens    int    `json:"reward_tokens"`
 }
 
 // Player is one ranked user.
@@ -79,7 +78,7 @@ func (s *PGStore) ListStories(ctx context.Context) ([]Story, error) {
 	for _, r := range rows {
 		out = append(out, Story{
 			ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, ThumbnailURL: r.ThumbnailUrl,
-			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), RewardTokens: int(r.RewardTokens),
+			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies),
 		})
 	}
 	return out, nil

@@ -73,8 +73,8 @@ func TestPGStore(t *testing.T) {
 	var s1, s2 string
 	insert := func(title string, published bool) string {
 		var id string
-		err := pool.QueryRow(ctx, `INSERT INTO stories (title, synopsis, thumbnail_url, difficulty_level, reward_trophies, reward_tokens, is_published)
-			VALUES ($1, 'syn', 'http://img', 'hard', 5, 3, $2) RETURNING id`, title, published).Scan(&id)
+		err := pool.QueryRow(ctx, `INSERT INTO stories (title, synopsis, thumbnail_url, difficulty_level, reward_trophies, is_published)
+			VALUES ($1, 'syn', 'http://img', 'hard', 5, $2) RETURNING id`, title, published).Scan(&id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func TestPGStore(t *testing.T) {
 	if err != nil || len(got) != 2 || got[0].Title != "second" || got[1].Title != "first" {
 		t.Fatalf("stories: %+v %v", got, err)
 	}
-	if got[0].DifficultyLevel != "hard" || got[0].RewardTrophies != 5 || got[0].RewardTokens != 3 || got[0].ThumbnailURL != "http://img" {
+	if got[0].DifficultyLevel != "hard" || got[0].RewardTrophies != 5 || got[0].ThumbnailURL != "http://img" {
 		t.Fatalf("story fields: %+v", got[0])
 	}
 

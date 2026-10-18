@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { STATS_POLL_MS, useGetStatsQuery } from '@/api/dashboard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { useLogout } from '@/hooks/useLogout'
+import { useGameStore } from '@/store/useGameStore'
 import { avatarSrc } from '@/utils/avatar'
 
 /** Profile button on the right of the navbar; opens a menu with the user's details. */
@@ -20,6 +21,7 @@ export default function UserMenu() {
   const { data: user, isPending } = useCurrentUser()
   const { logout, isPending: loggingOut } = useLogout()
   const { data: stats } = useGetStatsQuery(undefined, { refetchInterval: STATS_POLL_MS })
+  const tokens = useGameStore((s) => s.tokenBalance)
 
   if (isPending || !user) return <Skeleton className="h-9 w-32" />
 
@@ -49,7 +51,7 @@ export default function UserMenu() {
         <div className="space-y-1 px-2 py-1.5 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Tokens</span>
-            <span className="text-gold">{stats?.tokens ?? user.token_balance}</span>
+            <span className="text-gold">{tokens ?? stats?.tokens ?? user.token_balance}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Trophies</span>

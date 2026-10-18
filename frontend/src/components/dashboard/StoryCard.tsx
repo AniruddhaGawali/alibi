@@ -1,4 +1,4 @@
-import { RiCoinsLine, RiTrophyLine } from '@remixicon/react'
+import { RiTrophyLine } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardFooter, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -49,10 +49,6 @@ export default function StoryCard({
           <span className="flex items-center gap-1 text-gold" title="Trophies for solving it">
             <RiTrophyLine className="size-4" aria-hidden />
             {story.reward_trophies}
-          </span>
-          <span className="flex items-center gap-1 text-gold" title="Tokens for solving it">
-            <RiCoinsLine className="size-4" aria-hidden />
-            {story.reward_tokens}
           </span>
         </CardContent>
         <CardFooter>

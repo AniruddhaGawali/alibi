@@ -1,6 +1,6 @@
 -- name: GetCaseBriefing :one
 -- A published case's briefing text. Unpublished cases do not exist for players.
-SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, reward_tokens
+SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies
 FROM stories
 WHERE id = @id AND is_published;
 

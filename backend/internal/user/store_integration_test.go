@@ -140,29 +140,60 @@ func TestPGStore(t *testing.T) {
 		t.Fatalf("unknown user: %v", err)
 	}
 
-	// Token balance: atomic, never negative.
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, 10); err != nil || n != 20 {
-		t.Fatalf("grant: %d %v", n, err)
-	}
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, -4); err != nil || n != 16 {
+	// Token balance: atomic, never negative, never above 10.
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, -4); err != nil || n != 6 {
 		t.Fatalf("spend: %d %v", n, err)
 	}
-	if _, err := s.AdjustTokenBalance(ctx, u.ID, -17); !errors.Is(err, user.ErrInsufficientTokens) {
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 2); err != nil || n != 8 {
+		t.Fatalf("grant: %d %v", n, err)
+	}
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 25); err != nil || n != 10 {
+		t.Fatalf("grant past the cap should stop at 10: %d %v", n, err)
+	}
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 1); err != nil || n != 10 {
+		t.Fatalf("refund at the cap: %d %v", n, err)
+	}
+	if _, err := s.AdjustTokenBalance(ctx, u.ID, -11); !errors.Is(err, user.ErrInsufficientTokens) {
 		t.Fatalf("overdraw: %v", err)
 	}
-	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 16 {
+	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 10 {
 		t.Fatalf("balance after rejected overdraw = %d", n)
 	}
-	// The balance is 64-bit: repeated large grants must not overflow.
-	for i := 0; i < 3; i++ {
-		if _, err := s.AdjustTokenBalance(ctx, u.ID, 2_000_000_000); err != nil {
-			t.Fatalf("large grant %d: %v", i, err)
-		}
-	}
-	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 6_000_000_016 {
-		t.Fatalf("balance = %d", n)
+	// The database itself refuses more than 10, whatever the Go code does.
+	if _, err := pool.Exec(ctx, "UPDATE users SET token_balance = 11 WHERE id = $1", u.ID); err == nil {
+		t.Fatal("token_balance 11 should violate the CHECK constraint")
 	}
 	if _, err := s.AdjustTokenBalance(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, user.ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)
+	}
+
+	// Daily reset: every balance becomes exactly 10, whether it was low or empty.
+	other, err := s.Create(ctx, "watson", "w@x.co", "hash", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.AdjustTokenBalance(ctx, u.ID, -10); err != nil { // u is now empty
+		t.Fatal(err)
+	}
+	if n, err := s.ResetAllTokenBalances(ctx, 10); err != nil || n != 2 {
+		t.Fatalf("reset: %d %v", n, err)
+	}
+	for _, id := range []string{u.ID, other.ID} {
+		if n, _ := s.GetTokenBalance(ctx, id); n != 10 {
+			t.Fatalf("balance after reset = %d", n)
+		}
+	}
+	if n, err := s.ResetAllTokenBalances(ctx, 10); err != nil || n != 0 {
+		t.Fatalf("second reset changed %d rows: %v", n, err)
+	}
+	// Asking for more than the cap still stops at 10.
+	if _, err := s.AdjustTokenBalance(ctx, other.ID, -3); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.ResetAllTokenBalances(ctx, 99); err != nil || n != 1 {
+		t.Fatalf("reset above the cap: %d %v", n, err)
+	}
+	if n, _ := s.GetTokenBalance(ctx, other.ID); n != 10 {
+		t.Fatalf("balance after a reset to 99 = %d", n)
 	}
 }

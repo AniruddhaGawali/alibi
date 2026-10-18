@@ -1,4 +1,5 @@
 import { queryClient } from '@/api/queryClient'
+import { useGameStore } from '@/store/useGameStore'
 import { useSessionStore } from '@/store/useSessionStore'
 import { deleteJwt, deleteRefreshToken, deleteUserData } from './cookieHelpers'
 
@@ -8,5 +9,6 @@ export function clearSession(): void {
   deleteRefreshToken()
   deleteUserData()
   queryClient.clear()
+  useGameStore.getState().setTokenBalance(null) // the next user must not see this balance
   useSessionStore.getState().signOut()
 }

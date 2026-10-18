@@ -32,6 +32,14 @@ type Config struct {
 	OllamaHost       string
 	CORSOrigins      []string // browser origins allowed to call the API
 	OpenRouterAPIKey string
+	LLMTimeout       time.Duration // one interrogation call to OpenRouter
+
+	// Token economy and chat storage.
+	DailyTokens           int    // every balance is reset to this (and new accounts start with it); at most 10, the most a player can hold
+	TokenResetCron        string // standard 5-field cron spec for the daily reset
+	TokenResetTimezone    string // IANA zone the cron spec is read in
+	MongoDatabase         string // database holding chat_messages
+	ChatWorkerConcurrency int    // chat storage consumers in the API process
 
 	// Image object storage (Supabase Storage). Optional: when SUPABASE_URL is
 	// empty, custom avatar uploads are disabled.
@@ -171,6 +179,13 @@ func load(required []string) (*Config, error) {
 		OllamaHost:       envStr("OLLAMA_HOST", "http://localhost:11434"),
 		CORSOrigins:      parseOrigins(envStr("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
+		LLMTimeout:       time.Duration(envInt("LLM_TIMEOUT_SECONDS", 20, 1, 120)) * time.Second,
+
+		DailyTokens:           envInt("DAILY_TOKENS", 10, 0, 10),
+		TokenResetCron:        envStr("TOKEN_RESET_CRON", "0 0 * * *"),
+		TokenResetTimezone:    envStr("TOKEN_RESET_TIMEZONE", "UTC"),
+		MongoDatabase:         envStr("MONGO_DATABASE", "alibi"),
+		ChatWorkerConcurrency: envInt("CHAT_WORKER_CONCURRENCY", 2, 1, 32),
 
 		SupabaseURL:            strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),

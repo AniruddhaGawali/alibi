@@ -6,6 +6,7 @@ package cases
 import (
 	"context"
 	"errors"
+	"time"
 
 	"backend/internal/db/dbgen"
 	"github.com/google/uuid"
@@ -22,7 +23,14 @@ var (
 	ErrLockedElsewhere = errors.New("cases: user has another active case")
 	// ErrUserGone means the user row no longer exists.
 	ErrUserGone = errors.New("cases: user not found")
+	// ErrNotesFull means the user already has the maximum number of notes for the case.
+	ErrNotesFull = errors.New("cases: too many notes")
+	// ErrBadSuspect means the suspect does not belong to the case.
+	ErrBadSuspect = errors.New("cases: suspect is not part of this case")
 )
+
+// MaxNotesPerCase caps how many notes one player can keep per case.
+const MaxNotesPerCase = 200
 
 // Scene is one crime-scene image.
 type Scene struct {
@@ -40,7 +48,6 @@ type Briefing struct {
 	MainPlot        string  `json:"main_plot"`
 	DifficultyLevel string  `json:"difficulty_level"`
 	RewardTrophies  int     `json:"reward_trophies"`
-	RewardTokens    int     `json:"reward_tokens"`
 	Scenes          []Scene `json:"scenes"`
 }
 
@@ -71,6 +78,26 @@ type Store interface {
 	// Start locks the user into the case. Starting the case they are already in
 	// returns the existing lock; another case returns ErrLockedElsewhere.
 	Start(ctx context.Context, userID, storyID string) (*Lock, error)
+
+	// Notes are the player's private notes for a case, newest first.
+	Notes(ctx context.Context, userID, storyID string) ([]Note, error)
+	// AddNote saves a note, optionally about one suspect of the case and/or tied to one
+	// log entry (chatMessageID; the caller has already verified it). It returns
+	// ErrNotFound for an unknown case, ErrBadSuspect for a suspect from another case
+	// and ErrNotesFull at MaxNotesPerCase.
+	AddNote(ctx context.Context, userID, storyID string, suspectID, chatMessageID *string, body string) (*Note, error)
+	// DeleteNote removes the user's own note; ErrNotFound if it is not theirs or is gone.
+	DeleteNote(ctx context.Context, userID, noteID string) error
+}
+
+// Note is one of the detective's own notes.
+type Note struct {
+	ID        string  `json:"id"`
+	SuspectID *string `json:"suspect_id"` // null when the note is about the case in general
+	// ChatMessageID is the interrogation log entry the note is tied to, if any.
+	ChatMessageID *string   `json:"chat_message_id"`
+	Body          string    `json:"body"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // PGStore implements Store. All SQL is in sql/queries/cases.sql (sqlc).
@@ -92,7 +119,7 @@ func (s *PGStore) Briefing(ctx context.Context, id string) (*Briefing, error) {
 	}
 	b := &Briefing{
 		ID: row.ID, Title: row.Title, Synopsis: row.Synopsis, MainPlot: row.MainPlot,
-		DifficultyLevel: row.DifficultyLevel, RewardTrophies: int(row.RewardTrophies), RewardTokens: int(row.RewardTokens),
+		DifficultyLevel: row.DifficultyLevel, RewardTrophies: int(row.RewardTrophies),
 		Scenes: make([]Scene, 0, len(scenes)),
 	}
 	for _, sc := range scenes {
@@ -163,4 +190,60 @@ func (s *PGStore) Start(ctx context.Context, userID, storyID string) (*Lock, err
 		return cur, nil
 	}
 	return nil, ErrLockedElsewhere
+}
+
+func (s *PGStore) Notes(ctx context.Context, userID, storyID string) ([]Note, error) {
+	rows, err := s.q.ListCaseNotes(ctx, dbgen.ListCaseNotesParams{UserID: userID, StoryID: storyID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Note, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Note{ID: r.ID, SuspectID: r.SuspectID, ChatMessageID: r.ChatMessageID, Body: r.Body, CreatedAt: r.CreatedAt})
+	}
+	return out, nil
+}
+
+func (s *PGStore) AddNote(ctx context.Context, userID, storyID string, suspectID, chatMessageID *string, body string) (*Note, error) {
+	ok, err := s.q.CaseIsPublished(ctx, storyID)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrNotFound
+	}
+	if suspectID != nil {
+		found, err := s.q.SuspectInCase(ctx, dbgen.SuspectInCaseParams{ID: *suspectID, CaseID: storyID})
+		if err != nil {
+			return nil, err
+		}
+		if !found {
+			return nil, ErrBadSuspect
+		}
+	}
+	row, err := s.q.CreateCaseNote(ctx, dbgen.CreateCaseNoteParams{
+		UserID: userID, StoryID: storyID, SuspectID: suspectID, ChatMessageID: chatMessageID, Body: body, MaxNotes: MaxNotesPerCase,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotesFull
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+		return nil, ErrUserGone
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Note{ID: row.ID, SuspectID: row.SuspectID, ChatMessageID: row.ChatMessageID, Body: row.Body, CreatedAt: row.CreatedAt}, nil
+}
+
+func (s *PGStore) DeleteNote(ctx context.Context, userID, noteID string) error {
+	n, err := s.q.DeleteCaseNote(ctx, dbgen.DeleteCaseNoteParams{ID: noteID, UserID: userID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

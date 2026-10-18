@@ -34,8 +34,19 @@ func (f *fakeStore) AdjustTokenBalance(_ context.Context, id string, d int64) (i
 	if n+d < 0 {
 		return 0, user.ErrInsufficientTokens
 	}
-	f.bal[id] = n + d
-	return n + d, nil
+	f.bal[id] = min(n+d, MaxBalance) // the real store caps too
+	return f.bal[id], nil
+}
+
+func (f *fakeStore) ResetAllTokenBalances(_ context.Context, tokens int64) (int64, error) {
+	var n int64
+	for id, b := range f.bal {
+		if b != tokens {
+			f.bal[id] = tokens
+			n++
+		}
+	}
+	return n, nil
 }
 
 func newService(t *testing.T) (*Service, *fakeStore, *miniredis.Miniredis) {

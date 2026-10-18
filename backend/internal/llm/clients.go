@@ -18,22 +18,27 @@ import (
 type Clients struct {
 	Ollama     *api.Client
 	OpenRouter *openrouter.OpenRouter // nil when no API key is configured
+	timeout    time.Duration          // per interrogation call
 }
 
 // NewClients builds both clients. ollamaHost is e.g. http://localhost:11434.
 // An empty openRouterKey leaves OpenRouter disabled rather than failing, so
-// local development works with Ollama alone.
-func NewClients(ollamaHost, openRouterKey string) (*Clients, error) {
+// local development works with Ollama alone. timeout bounds each interrogation
+// call (0 uses 20 s).
+func NewClients(ollamaHost, openRouterKey string, timeout time.Duration) (*Clients, error) {
 	u, err := url.Parse(ollamaHost)
 	if err != nil {
 		return nil, fmt.Errorf("invalid OLLAMA_HOST %q: %w", ollamaHost, err)
 	}
-	c := &Clients{Ollama: api.NewClient(u, http.DefaultClient)}
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	c := &Clients{Ollama: api.NewClient(u, http.DefaultClient), timeout: timeout}
 
 	if openRouterKey != "" {
 		c.OpenRouter = openrouter.New(
 			openrouter.WithSecurity(openRouterKey),
-			openrouter.WithTimeout(30*time.Second),
+			openrouter.WithTimeout(timeout),
 		)
 		utils.LogInfo("[LLM] OpenRouter client initialized")
 	} else {

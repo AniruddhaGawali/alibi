@@ -16,7 +16,6 @@ export interface Briefing {
   main_plot: string
   difficulty_level: Difficulty
   reward_trophies: number
-  reward_tokens: number
   scenes: Scene[]
 }
 
@@ -35,6 +34,26 @@ export interface CaseLock {
   story_id: string
 }
 
+/**
+ * One of the detective's own notes; `suspect_id` is null when it is about the case in general,
+ * and `chat_message_id` is set when it is tied to one interrogation log entry.
+ */
+export interface CaseNoteItem {
+  id: string
+  suspect_id: string | null
+  chat_message_id: string | null
+  body: string
+  created_at: string
+}
+
+export interface AddNoteInput {
+  caseId: string
+  body: string
+  suspectId: string | null
+  /** Ties the note to one interrogation log entry (a stored one, not a just-answered local one). */
+  chatMessageId?: string
+}
+
 export const casesApi = createApi({
   name: 'cases',
   endpoints: (build) => ({
@@ -46,6 +65,22 @@ export const casesApi = createApi({
       query: (id) => `/api/cases/${id}/suspects`,
       providesTags: (_result, id) => [{ type: 'Cases', id }],
     }),
+    getNotes: build.query<CaseNoteItem[], string>({
+      query: (id) => `/api/cases/${id}/notes`,
+      providesTags: (_result, id) => [{ type: 'Notes', id }],
+    }),
+    addNote: build.mutation<CaseNoteItem, AddNoteInput>({
+      query: ({ caseId, body, suspectId, chatMessageId }) => ({
+        url: `/api/cases/${caseId}/notes`,
+        method: 'POST',
+        body: { body, suspect_id: suspectId, chat_message_id: chatMessageId ?? null },
+      }),
+      invalidatesTags: (_result, arg) => [{ type: 'Notes', id: arg.caseId }],
+    }),
+    deleteNote: build.mutation<{ message: string }, { caseId: string; noteId: string }>({
+      query: ({ caseId, noteId }) => ({ url: `/api/cases/${caseId}/notes/${noteId}`, method: 'DELETE' }),
+      invalidatesTags: (_result, arg) => [{ type: 'Notes', id: arg.caseId }],
+    }),
     startCase: build.mutation<CaseLock, string>({
       query: (id) => ({ url: `/api/cases/${id}/start`, method: 'POST' }),
       // the dashboard's active-case banner and stats depend on the lock
@@ -54,4 +89,11 @@ export const casesApi = createApi({
   }),
 })
 
-export const { useGetBriefingQuery, useGetSuspectsQuery, useStartCaseMutation } = casesApi
+export const {
+  useGetBriefingQuery,
+  useGetSuspectsQuery,
+  useGetNotesQuery,
+  useAddNoteMutation,
+  useDeleteNoteMutation,
+  useStartCaseMutation,
+} = casesApi

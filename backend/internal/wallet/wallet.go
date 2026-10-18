@@ -20,7 +20,9 @@ var (
 )
 
 const (
-	MaxAmount = 1_000_000
+	// MaxBalance is the most tokens a player can hold; grants and refunds stop here.
+	MaxBalance = user.MaxTokenBalance
+	MaxAmount  = 1_000_000
 	// cacheTTL bounds how long a stale cached value can survive if an
 	// invalidation is ever lost (e.g. Redis was unreachable at that moment).
 	cacheTTL = time.Hour
@@ -35,6 +37,8 @@ type Store interface {
 	// AdjustTokenBalance adds delta (may be negative) and returns the new
 	// balance. It returns ErrInsufficient if the result would go below zero.
 	AdjustTokenBalance(ctx context.Context, userID string, delta int64) (int64, error)
+	// ResetAllTokenBalances sets every balance to tokens; returns rows changed.
+	ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error)
 }
 
 type Service struct {
@@ -76,7 +80,7 @@ func (s *Service) Cache(ctx context.Context, userID string, balance int64) {
 	}
 }
 
-// Grant adds amount tokens and returns the new balance.
+// Grant adds amount tokens and returns the new balance, which never exceeds MaxBalance.
 func (s *Service) Grant(ctx context.Context, userID string, amount int64) (int64, error) {
 	if amount < 1 || amount > MaxAmount {
 		return 0, ErrInvalid

@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useGetBriefingQuery } from '@/api/cases'
 import CasePlot from './CasePlot'
 import CaseVisuals from './CaseVisuals'
+import ChatHistorySection from './ChatHistorySection'
 import ChatWidget from './ChatWidget'
 import SuspectCarousel from './SuspectCarousel'
 
@@ -51,6 +52,7 @@ export default function CaseBriefing({ caseId }: { caseId: string }) {
       </div>
 
       <SuspectCarousel caseId={caseId} />
+      <ChatHistorySection caseId={caseId} />
       <ChatWidget caseId={caseId} />
     </div>
   )

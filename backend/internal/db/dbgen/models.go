@@ -15,6 +15,16 @@ type ActiveCaseLock struct {
 	LockedAt time.Time
 }
 
+type CaseNote struct {
+	ID            string
+	UserID        string
+	StoryID       string
+	SuspectID     *string
+	Body          string
+	CreatedAt     time.Time
+	ChatMessageID *string
+}
+
 type CaseScene struct {
 	ID           string
 	CaseID       string
@@ -30,21 +40,26 @@ type Story struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
-	RewardTokens    int32
 	IsPublished     bool
 	CreatedAt       time.Time
 	MainPlot        string
+	LlmModel        string
 }
 
 type Suspect struct {
-	ID               string
-	CaseID           string
-	Name             string
-	Role             string
-	AvatarUrl        string
-	InitialTestimony string
-	IsCulprit        bool
-	DisplayOrder     int32
+	ID                   string
+	CaseID               string
+	Name                 string
+	Role                 string
+	AvatarUrl            string
+	InitialTestimony     string
+	IsCulprit            bool
+	DisplayOrder         int32
+	RelationshipToVictim string
+	Persona              string
+	PublicAlibi          string
+	HiddenTruth          string
+	ConfessionTriggers   string
 }
 
 type User struct {
@@ -59,4 +74,5 @@ type User struct {
 	CasesSolved   int32
 	AvatarUrl     *string
 	AvatarPath    *string
+	IsAdmin       bool
 }

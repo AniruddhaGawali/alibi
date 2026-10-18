@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { RiTrophyLine } from '@remixicon/react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -6,8 +7,11 @@ import { LEADERBOARD_POLL_MS, useGetLeaderboardQuery } from '@/api/dashboard'
 import { useGetUserDataQuery } from '@/api/user'
 import { cn } from '@/lib/utils'
 
-/** Top players by trophies as a table, refetched every few seconds. */
-export default function Leaderboard() {
+/**
+ * Top players by trophies as a table, refetched every few seconds. `side` (the stats)
+ * is placed to the right of the framed table, top and bottom aligned with the frame.
+ */
+export default function Leaderboard({ side }: { side?: ReactNode }) {
   const { data: entries, isPending, error } = useGetLeaderboardQuery(undefined, {
     refetchInterval: LEADERBOARD_POLL_MS,
   })
@@ -16,6 +20,8 @@ export default function Leaderboard() {
   return (
     <section className="space-y-3">
       <h2 className="text-2xl">Leaderboard</h2>
+      <div className="grid gap-x-2 lg:grid-cols-[1fr_11.5rem]">
+      <div className="min-w-0">
       {isPending ? (
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map((i) => (
@@ -56,6 +62,9 @@ export default function Leaderboard() {
           </Table>
         </div>
       )}
+      </div>
+      {side && <div className="my-6 flex">{side}</div>}
+      </div>
     </section>
   )
 }

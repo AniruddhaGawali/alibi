@@ -1,6 +1,6 @@
 -- name: ListStories :many
 -- Metadata for the dashboard cards, newest first.
-SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies, reward_tokens
+SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies
 FROM stories
 WHERE is_published
 ORDER BY created_at DESC, id;

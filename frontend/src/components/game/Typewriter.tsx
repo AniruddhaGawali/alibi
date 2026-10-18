@@ -1,31 +1,40 @@
-import { useEffect, useState } from 'react'
-import { play } from '@/utils/sound'
+import { useTypewriter } from '@/hooks/useTypewriter'
 
-/** Types `text` out character by character, like a police report; instant for reduced-motion users. */
-export default function Typewriter({ text, speedMs = 28 }: { text: string; speedMs?: number }) {
-  const reduce = typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const [count, setCount] = useState(0)
+interface TypewriterProps {
+  text: string
+  speedMs?: number
+  /** false shows the text without typing it out. */
+  animate?: boolean
+  onDone?: () => void
+  className?: string
+}
 
-  useEffect(() => {
-    if (reduce) return
-    const id = setInterval(() => {
-      setCount((c) => {
-        if (c >= text.length) {
-          clearInterval(id)
-          return c
-        }
-        if (text[c] !== ' ') play('key')
-        return c + 1
-      })
-    }, speedMs)
-    return () => clearInterval(id)
-  }, [text, speedMs, reduce])
+/**
+ * Types `text` out character by character, like a police report. While it types, a
+ * click (or Enter / Space) skips to the full text.
+ */
+export default function Typewriter({ text, speedMs = 28, animate = true, onDone, className }: TypewriterProps) {
+  const { shown, typing, skip } = useTypewriter(text, { speedMs, animate, onDone })
 
-  const shown = reduce ? text : text.slice(0, count)
   return (
-    <span className="font-typewriter" aria-label={text}>
+    <span
+      className={`font-typewriter ${typing ? 'cursor-pointer' : ''} ${className ?? ''}`}
+      aria-label={text}
+      {...(typing && {
+        role: 'button',
+        tabIndex: 0,
+        title: 'Click to skip',
+        onClick: skip,
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            skip()
+          }
+        },
+      })}
+    >
       <span aria-hidden>{shown}</span>
-      {!reduce && count < text.length && <span aria-hidden className="typewriter-caret" />}
+      {typing && <span aria-hidden className="typewriter-caret" />}
     </span>
   )
 }

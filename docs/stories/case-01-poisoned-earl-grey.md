@@ -1,8 +1,8 @@
 # Case #01: The Poisoned Earl Grey
 
 - **Difficulty:** Easy (tutorial case)
-- **Rewards:** +1 trophy, +5 bonus chat tokens
-- **Status:** the title, synopsis, difficulty and rewards are seeded as the only dev story (`backend/sql/seed/dev_seed.sql`). Suspects and culprit logic below are for later phases (P3 briefing, P4 interrogation prompts, P5 accusation); they have no tables yet.
+- **Rewards:** +1 trophy (winning never pays tokens; players hold at most 10, refilled daily)
+- **Status:** seeded as the only dev story (`backend/sql/seed/dev_seed.sql`): briefing, scenes, suspects (P3) and the interrogation personas (P4.1: relationship, persona, public alibi, hidden truth, confession triggers). The accusation (P5) is still to come.
 
 ## Synopsis
 
@@ -21,3 +21,7 @@ Lord Harrington was found dead in his study at 10:00 AM, a spilled cup of Earl G
 
 - Beatrice uses dual-state prompting: deny by default; the trigger question is "who was last in the study?".
 - Timeline: 9:30 tea served (Thomas), 9:45 poisoned (Beatrice), 10:00 body found.
+- Added for the interrogation prompts so the trigger question has a trail to follow (edit in the seed if you want it different):
+  - Thomas glimpsed Beatrice leaving the study at about 9:45 AM but protects her out of loyalty; he admits it when pressed on who went near the study after he served the tea.
+  - Lady Eleanor admits the gambling debt when asked about money or why she is so defensive.
+  - Arthur keeps rat poison (arsenic, not cyanide) in a locked shed and admits it when asked about poisons.

@@ -54,6 +54,11 @@ export function deleteJwt(): void {
 
 // --- Refresh token ---
 
+/** True while the user can still be signed in: an access token, or a refresh token to get a new one. */
+export function hasSession(): boolean {
+  return readCookie(JWT_COOKIE) !== null || readCookie(REFRESH_COOKIE) !== null
+}
+
 export function getRefreshToken(): string | null {
   return readCookie(REFRESH_COOKIE)
 }

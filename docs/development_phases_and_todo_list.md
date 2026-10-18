@@ -88,45 +88,50 @@
 ### P3.1 Briefing Backend (Go)
 - [x] Create API endpoint to fetch the specific active case's main plot and scene images. (`GET /api/cases/{id}/briefing`; case = a `stories` row with `main_plot` and `case_scenes`.)
 - [x] Create API endpoint to fetch all suspect avatars and their initial testimonies for the active case. (`GET /api/cases/{id}/suspects`; `is_culprit` is never selected.)
-- [x] Start a case: `POST /api/cases/{id}/start` takes the Active Case Lock (400 "Finish your active case first" if locked into another case; idempotent for the same case). The dashboard Start / Continue buttons still need wiring to it in P3.2.
+- [x] Start a case: `POST /api/cases/{id}/start` takes the Active Case Lock (400 "Finish your active case first" if locked into another case; idempotent for the same case). The dashboard Start / Continue buttons call it and open `/case/:id`.
 - [x] Case #01 seeded (plot, 3 scenes, 4 suspects, Beatrice as culprit) in `backend/sql/seed/dev_seed.sql`; testimonies are drafts to review.
 
 ### P3.2 Briefing Frontend (React)
-- [x] Build the Story Dashboard UI to render the main plot and visuals. (`/case/:id`: typewriter title, scene gallery beside a plot box of the same height that scrolls inside.)
-- [~] Suspect cards in a horizontal carousel show avatar, name, role and the initial testimony on the card itself (instead of a hover tooltip).
+- [x] Build the Story Dashboard UI to render the main plot and visuals. (`/case/:id`: title, framed scene gallery beside the letter-shaped case file.)
+- [x] Suspect cards in a horizontal carousel show avatar, name, role and the initial testimony on the card; hovering the portrait also shows the testimony in a tooltip.
 - [x] Chat button on each suspect card opens the floating chat window (Zustand `useChatStore`) with that suspect pre-selected; the window shows the suspect's details and a placeholder where messages go in P3.3.
-- [ ] Suspect corkboard: suspect photos pinned on a board with red string linking them (reuse `components/game/RedString`).
 
 ### P3.3 Chat History UI (React)
-- [ ] Build the global chat history section on the main story dashboard.
-- [ ] Implement filtering logic so clicking a specific character shows only their chat previews.
+- [x] Build the global chat history section on the main story dashboard. (`ChatHistorySection`; reads `GET /api/cases/{id}/chat-history`, which does not exist yet (P4.3), so the UI shows the empty state until it does. Expected item shape: `ChatMessage` in `src/api/chatHistory.ts`.)
+- [x] Implement filtering logic so clicking a specific character shows only their chat previews. (Filter pills, and clicking a suspect card filters and scrolls to the logs; `selectedSuspectFilter` in `useGameStore`.)
+- [x] Detective's notes live inside the interrogation log (`NoteComposer` + `NoteCard`): an "Add a note" box above the logs, and notes appear in the same scrolling stream as the logs, newest first.
+- [x] Case notes are saved to the player's account: `case_notes` table (migration 00010) and `GET/POST /api/cases/{id}/notes`, `DELETE /api/cases/{id}/notes/{note_id}` (own notes only, max 1000 chars, max 200 per case), used through `createApi` hooks.
+- [x] A note can be about one suspect (`suspect_id`) or the case in general: with a suspect filter selected the note is about that suspect, under All Logs a dropdown picks who. Notes show under the matching filter.
+- [x] Tie a note to a specific interrogation log entry: "Add note" on each log card saves a note with `chat_message_id` (`case_notes.chat_message_id`, migration 00012). The API checks the entry is the caller's own, from this case, and takes the note's suspect from it; the note card quotes the question it is about.
 
 ---
 
 ## Phase 4: The Interrogation (Core Gameplay Loop) (P4)
 
 ### P4.1 LLM Backend Integration (Go)
-- [ ] Set up the LLM Microservice to connect with the Ollama/OpenRouter APIs.
-- [ ] Implement the input moderation layer to detect and block off-topic queries (e.g., code, math).
-- [ ] Build the dynamic System Prompt swapping logic based on the requested character ID (Dual-State prompting for culprits).
-- [ ] Optimize the request chain to ensure AI responses return within the 2-3 second NFR limit.
+- [x] Set up the LLM Microservice to connect with the Ollama/OpenRouter APIs. OpenRouter answers interrogations (`internal/llm`, `internal/interrogation`, `POST /api/cases/{id}/suspects/{suspect_id}/interrogate`); Ollama stays a local-only client.
+- [x] Per-case model: `stories.llm_model` (default `google/gemma-4-31b-it`), set by admins through `POST /api/admin/cases` and `PATCH /api/admin/cases/{id}` (needs `users.is_admin`). Model ids are format-checked (no `:online`, no `openrouter/*` routers) and must be text-output-only on OpenRouter.
+- [x] Text-to-text only: no tools or tool choice, web search and file parser plugins switched off, output modality `text`; tool calls, images or audio in a reply are discarded and the token is refunded.
+- [x] Implement the input moderation layer to detect and block off-topic queries (e.g., code, math), plus obvious prompt-injection attempts (`llm.Moderate`; blocked questions get a fixed in-character reply and cost no token).
+- [x] Build the dynamic System Prompt swapping logic based on the requested character ID (Dual-State prompting for culprits). Three sections: persona with public alibi / hidden truth / confession triggers, cross-character awareness (other suspects' public facts only, never their secrets), strict rules (length, stay in character, injection defence).
+- [ ] Optimize the request chain to ensure AI responses return within the 2-3 second NFR limit. Done so far: no SDK retries, 220-token reply cap, `LLM_TIMEOUT_SECONDS` (default 20) with refund. Still to do: measure real latency with an `OPENROUTER_API_KEY` and pick a faster default model if Gemma misses the target.
 
 ### P4.2 Token Economy Backend (Go)
-- [ ] Implement the 1-token deduction logic in Redis (DECR) executed *before* calling the LLM.
-- [ ] Implement the token refund logic (INCR) if the query is blocked by moderation or if the LLM times out.
-- [ ] Create the daily cron job (or lazy evaluation script) to reset user token balances to 10 (without rolling over unused tokens).
+- [x] Implement the 1-token deduction executed *before* calling the LLM (after moderation): `wallet.SpendQuestion` runs an atomic Redis DECR on `user:coins:<id>` that is undone straight away if it goes below zero (403 "Out of tokens"), then mirrors the spend to Postgres; on any disagreement the key is dropped and reloaded from Postgres.
+- [x] Implement the token refund logic if the LLM times out or fails (`wallet.RefundQuestion`: Postgres, then Redis INCR; runs even if the client disconnects). Moderation runs before the spend, so a blocked query never costs a token.
+- [x] Create the daily cron job to reset user token balances to 10 (without rolling over unused tokens): `internal/jobs` with robfig/cron inside the API process, `TOKEN_RESET_CRON` / `TOKEN_RESET_TIMEZONE` / `DAILY_TOKENS`, a Redis lock per calendar day so the reset runs exactly once a day across all replicas, for all users in one update (retried 3 times if Postgres fails, lock released on failure), Postgres set to exactly 10 (whatever the balance was, low, empty or higher) then the Redis balance keys cleared. The reset time comes from env for now; making it editable from the admin panel is P5.3.
 
 ### P4.3 Chat Storage Backend (Go)
-- [ ] Configure the LLM service to asynchronously push the generated Q&A payload to the Message Queue.
-- [ ] Build the background worker (Chat Storage Microservice) to consume queue events and insert documents into MongoDB.
-- [ ] Create API endpoint to fetch historical character chats from MongoDB.
+- [x] Configure the LLM service to asynchronously push the generated Q&A payload to the Message Queue (`queue:chat:events`, `chat.Event`: user_id, case_id, suspect_id, user_query, ai_response, timestamp, plus event_id, play_id, suspect_name, model).
+- [x] Build the background worker (Chat Storage Microservice) to consume queue events and insert documents into MongoDB (`chat.Worker`, goroutines in the API process, `CHAT_WORKER_CONCURRENCY`; collection `chat_messages`, `_id` = event id so redeliveries are no-ops; retries and `queue:chat:dlq` from the broker).
+- [x] Create API endpoint to fetch historical character chats from MongoDB: `GET /api/chat/{case_id}/{suspect_id}`, the caller's own exchanges oldest first (latest 200). The last 6 exchanges are also fed back to the model so suspects remember the conversation.
 
 ### P4.4 Chat Frontend (React)
-- [ ] Build the real-time chat interface (message bubbles, input field, loading states).
-- [ ] Connect the chat UI to the LLM backend via standard HTTP or WebSockets/SSE for fast delivery.
-- [ ] Integrate the visual token counter to update instantly when a message is sent (using Zustand/React Query for optimistic updates).
-- [ ] Add state logic to disable and visually block the chat input when the token balance hits zero.
-- [ ] Show testimonies and chat logs in the typewriter font (`font-typewriter`, `Typewriter` reveal).
+- [x] Build the real-time chat interface (message bubbles, input field, loading states): `components/chat/` (`ChatWindow`, `MessageBubble`, `ThinkingBubble`, `ChatInput`, `TokenCounter`). Detective bubbles are modern and right-aligned, suspects are aged paper in typewriter type on the left, errors are centred notices; "Suspect is thinking…" shows the moment a question is sent; the window follows new messages (`useStickToBottom`) and earlier conversation loads from `GET /api/chat/{case_id}/{suspect_id}`.
+- [x] Connect the chat UI to the LLM backend via standard HTTP: `useInterrogateMutation` (`api/chat.ts`) posts to `POST /api/cases/{id}/suspects/{suspect_id}/interrogate` (the built route, not `/api/chat`). A moderation block (422) shows the suspect's in-character brush-off; timeouts and failures show a notice; answers are added to the cached history so the chat and the case log update at once.
+- [x] Integrate the visual token counter to update instantly when a message is sent: `useGameStore.tokenBalance` is the one balance (kept in step with the server by `useSyncTokenBalance` in the layout), drops by 1 on send, is refunded on an error and set to the server's figure on success. The navbar menu, the stats panel and the chat all read it.
+- [x] Add state logic to disable and visually block the chat input when the token balance hits zero (disabled, "Out of tokens. Make your final deduction.", red border, greyed field, not-allowed cursor).
+- [x] Show testimonies and chat logs in the typewriter font (`font-typewriter`, `Typewriter` reveal): new answers type out character by character (`useTypewriter`), a click, Enter or Space skips to the full text, stored answers appear instantly.
 
 ---
 
@@ -135,7 +140,7 @@
 ### P5.1 Accusation Backend (Go)
 - [ ] Create the final accusation submission API.
 - [ ] Implement logic to evaluate the selected suspect against the true culprit in PostgreSQL.
-- [ ] Update the user's Trophies and bonus tokens in PostgreSQL.
+- [ ] Update the user's Trophies in PostgreSQL. A win pays trophies only: no bonus tokens (the `reward_tokens` column was removed in migration 00013).
 - [ ] Update the user's score in the Redis Leaderboard (ZINCRBY).
 - [ ] Unlock the user's "Active Case Lock".
 

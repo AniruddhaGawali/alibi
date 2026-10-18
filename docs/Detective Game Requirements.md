@@ -160,8 +160,8 @@ This system design transitions Alibi into a scalable **Microservices and Polyglo
    3. The **Chat Storage Microservice** pulls the message from the queue and appends it to the corresponding conversation document in **MongoDB**. When the user clicks on a suspect's chat history on the story dashboard, the Main Server queries the Chat Storage Microservice to fetch those specific logs from MongoDB.  
 5. **Case Resolution, Trophies & Leaderboard (Main Server \+ PostgreSQL \+ Redis):**  
    1. When the user clicks "Submit" and picks a suspect avatar, the **Main Server** checks PostgreSQL to see if the accusation is accurate.  
-   2. **Correct Guess:** The Main Server increments the user's Trophies and bonus chat tokens in PostgreSQL, unlocks their active case lock so they can pick a new story, and updates their score in the **Redis Leaderboard** (ZINCRBY leaderboard \<trophies\> \<user\_id\>).  
-   3. **Wrong Guess:** Trophies are deducted in PostgreSQL and Redis, and no bonus chat tokens are awarded.  
+   2. **Correct Guess:** The Main Server increments the user's Trophies in PostgreSQL (no bonus chat tokens: a player never holds more than 10 tokens, refilled daily), unlocks their active case lock so they can pick a new story, and updates their score in the **Redis Leaderboard** (ZINCRBY leaderboard \<trophies\> \<user\_id\>).  
+   3. **Wrong Guess:** Trophies are deducted in PostgreSQL and Redis, and nothing else changes.  
    * 
 
 # **7\. User Journey and Stories**
@@ -186,7 +186,7 @@ This system design transitions Alibi into a scalable **Microservices and Polyglo
   * **I want to** view a dashboard of available crime cases, my remaining tokens, my total trophies, and the top players leaderboard,  
   * **So that** I can track my rank and choose which mystery I want to solve.  
   * **Acceptance Criteria & Technical Details:**  
-    * **Story Cards:** Each crime story card displays the story title, synopsis, thumbnail, difficulty level, and the rewards/points (Trophies and bonus tokens) for solving it.  
+    * **Story Cards:** Each crime story card displays the story title, synopsis, thumbnail, difficulty level, and the reward (Trophies) for solving it.  
     * **Prominent Balances:** The dashboard prominently displays the player's current remaining daily token balance and total accumulated Trophies.  
     * **Redis-Powered Leaderboard:** A global leaderboard showing the top detectives ranked by Trophies is displayed on the dashboard and retrieved from Upstash Redis for fast loading.  
     * **Active Case Lock Mechanic:** Once a player selects and starts a crime story, they are locked into that active case and must complete it (by submitting their final accusation) before they can unlock and select another story.
@@ -256,7 +256,7 @@ This system design transitions Alibi into a scalable **Microservices and Polyglo
 * **Acceptance Criteria & Technical Details:**  
   * **Accusation Submission:** At the end of the game, the user can click a "Submit" button to make their final accusation.  
   * **Suspect Selection:** The system will display all character avatars, and the user must choose the correct culprit.  
-  * **Rewards (Correct Accusation):** If the user selects the accurate culprit, they are rewarded with a predefined number of trophies and chat tokens (configured in the game settings). The global leaderboard is updated based on this win.  
+  * **Rewards (Correct Accusation):** If the user selects the accurate culprit, they are rewarded with a predefined number of trophies (configured in the game settings); winning never awards chat tokens. The global leaderboard is updated based on this win.  
   * **Penalties (Incorrect Accusation):** If the user selects the wrong culprit, trophies are deducted from their total balance, and no chat tokens are awarded.  
   * **Trophies Display:** The user's total accumulated trophies must be prominently displayed on the main dashboard alongside their token balance.
 

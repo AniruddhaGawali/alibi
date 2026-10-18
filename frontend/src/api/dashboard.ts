@@ -9,7 +9,6 @@ export interface Story {
   thumbnail_url: string
   difficulty_level: Difficulty
   reward_trophies: number
-  reward_tokens: number
 }
 
 export interface DashboardStats {

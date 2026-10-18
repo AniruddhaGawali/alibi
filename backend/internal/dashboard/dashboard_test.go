@@ -70,13 +70,13 @@ func call(t *testing.T, fn http.HandlerFunc, out any) *httptest.ResponseRecorder
 }
 
 func TestStories(t *testing.T) {
-	st := &fakeStore{stories: []Story{{ID: "s1", Title: "The Locked Study", Synopsis: "x", ThumbnailURL: "u", DifficultyLevel: "hard", RewardTrophies: 5, RewardTokens: 3}}}
+	st := &fakeStore{stories: []Story{{ID: "s1", Title: "The Locked Study", Synopsis: "x", ThumbnailURL: "u", DifficultyLevel: "hard", RewardTrophies: 5}}}
 	h, _, _ := newHandler(t, st, fakeBalance{})
 	var got []map[string]any
 	if rec := call(t, h.Stories, &got); rec.Code != 200 || len(got) != 1 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	for _, k := range []string{"id", "title", "synopsis", "thumbnail_url", "difficulty_level", "reward_trophies", "reward_tokens"} {
+	for _, k := range []string{"id", "title", "synopsis", "thumbnail_url", "difficulty_level", "reward_trophies"} {
 		if _, ok := got[0][k]; !ok {
 			t.Errorf("missing field %q in %v", k, got[0])
 		}

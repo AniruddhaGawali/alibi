@@ -42,6 +42,7 @@ Rules:
 | `00007_add_users_cases_solved.sql` | `users.cases_solved`: how many cases the player has solved (CHECK >= 0); whatever finishes a case increments it |
 | `00008_avatars_in_object_storage.sql` | custom avatars move to the object store: `users.avatar_url` (public URL) + `avatar_path` (object path, for deleting a replaced image); drops `user_avatars` and `avatar_updated_at` |
 | `00009_create_case_briefing.sql` | `stories.main_plot`; `case_scenes` (image URL + display order, per case); `suspects` (role, avatar, initial testimony, server-only `is_culprit`, at most one culprit per case) |
+| `00010_create_case_notes.sql` | `case_notes`: a player's private notes per case, optionally about a suspect (`ON DELETE SET NULL`), body 1-1000 chars |
 
 There are no custom SQL functions or stored procedures; `gen_random_uuid()` is built into PostgreSQL 13+. The `alibi` database itself is created by `docker-compose.yml`.
 
@@ -52,6 +53,7 @@ There are no custom SQL functions or stored procedures; `gen_random_uuid()` is b
 | `users.sql` | `CreateUser` (with starting `token_balance`), `GetUserByEmail`, `GetUserByID`, `CheckAvailability` | OTP verification creates the user; login; profile; signup checks email/username are free before sending an OTP |
 | `avatars.sql` | `SetDefaultAvatar`, `SetCustomAvatar` | switch between a default avatar and an uploaded image; both return the replaced image's object path so it can be deleted from storage |
 | `cases.sql` | `GetCaseBriefing`, `ListCaseScenes`, `ListCaseSuspects` (explicit columns, no `is_culprit`), `GetUserLock`, `CaseIsPublished` | the case briefing endpoints and starting a case (uses `LockUserToCase`) |
+| `notes.sql` | `ListCaseNotes`, `CreateCaseNote` (refuses past the per-case cap), `SuspectInCase`, `DeleteCaseNote` (owner only) | the player's case notes |
 | `dashboard.sql` | `ListStories`, `GetUserStats`, `GetUsernames`, `TopPlayers`, `GetActiveCase` (with the story title), `LockUserToCase`, `ReleaseCaseLock` | dashboard stories, stats, leaderboard (and its Postgres fallback) and the active-case lock |
 | `wallet.sql` | `GetTokenBalance`, `AdjustTokenBalance` | read the balance; atomic grant/spend that cannot go below zero |
 

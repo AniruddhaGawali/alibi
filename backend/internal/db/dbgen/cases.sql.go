@@ -21,7 +21,7 @@ func (q *Queries) CaseIsPublished(ctx context.Context, id string) (bool, error) 
 }
 
 const getCaseBriefing = `-- name: GetCaseBriefing :one
-SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, reward_tokens
+SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies
 FROM stories
 WHERE id = $1 AND is_published
 `
@@ -33,7 +33,6 @@ type GetCaseBriefingRow struct {
 	MainPlot        string
 	DifficultyLevel string
 	RewardTrophies  int32
-	RewardTokens    int32
 }
 
 // A published case's briefing text. Unpublished cases do not exist for players.
@@ -47,7 +46,6 @@ func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefi
 		&i.MainPlot,
 		&i.DifficultyLevel,
 		&i.RewardTrophies,
-		&i.RewardTokens,
 	)
 	return i, err
 }

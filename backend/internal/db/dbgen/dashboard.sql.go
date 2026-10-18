@@ -76,7 +76,7 @@ func (q *Queries) GetUsernames(ctx context.Context, ids []string) ([]GetUsername
 }
 
 const listStories = `-- name: ListStories :many
-SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies, reward_tokens
+SELECT id, title, synopsis, thumbnail_url, difficulty_level, reward_trophies
 FROM stories
 WHERE is_published
 ORDER BY created_at DESC, id
@@ -89,7 +89,6 @@ type ListStoriesRow struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
-	RewardTokens    int32
 }
 
 // Metadata for the dashboard cards, newest first.
@@ -109,7 +108,6 @@ func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
 			&i.ThumbnailUrl,
 			&i.DifficultyLevel,
 			&i.RewardTrophies,
-			&i.RewardTokens,
 		); err != nil {
 			return nil, err
 		}

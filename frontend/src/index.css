@@ -467,7 +467,7 @@ body::after {
 .frame-vintage::after {
   content: '';
   position: absolute;
-  inset: -20px;
+  inset: -46px -20px;
   z-index: 2;
   pointer-events: none;
   background-repeat: no-repeat;
@@ -477,7 +477,7 @@ body::after {
     url('./assets/frame/crest-top.svg'), url('./assets/frame/crest-bottom.svg'),
     url('./assets/frame/side-l.svg'), url('./assets/frame/side-r.svg');
   background-size: 76px 76px, 76px 76px, 76px 76px, 76px 76px, 150px 53px, 150px 53px, 22px 54px, 22px 54px;
-  background-position: top left, top right, bottom left, bottom right, top center, bottom center, left center, right center;
+  background-position: left 0 top 26px, right 0 top 26px, left 0 bottom 26px, right 0 bottom 26px, top 0 center, bottom 0 center, left -5px center, right -5px center;
   filter: drop-shadow(0 2px 3px oklch(0 0 0 / 65%));
 }
 

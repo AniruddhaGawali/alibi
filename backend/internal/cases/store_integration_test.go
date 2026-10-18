@@ -130,4 +130,66 @@ func TestPGStore(t *testing.T) {
 	if l, _ := store.Lock(ctx, u.ID); l == nil || l.StoryID != story {
 		t.Fatalf("lock after start: %+v", l)
 	}
+
+	// Notes: private per user, newest first, optional suspect of the same case, capped, owner-only delete.
+	var suspectID string
+	mustScan(&suspectID, `SELECT id FROM suspects WHERE case_id = $1 AND name = 'Thomas'`, story)
+	var otherSuspect string
+	mustScan(&otherSuspect, `INSERT INTO suspects (case_id, name, role, initial_testimony) VALUES ($1, 'Elsewhere', 'r', 't') RETURNING id`, other)
+	n1, err := store.AddNote(ctx, u.ID, story, nil, nil, "first")
+	if err != nil || n1.SuspectID != nil || n1.Body != "first" {
+		t.Fatalf("add note: %+v %v", n1, err)
+	}
+	if _, err := store.AddNote(ctx, u.ID, story, &suspectID, nil, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddNote(ctx, u.ID, story, &otherSuspect, nil, "wrong case"); !errors.Is(err, cases.ErrBadSuspect) {
+		t.Fatalf("suspect of another case: %v", err)
+	}
+	if _, err := store.AddNote(ctx, u.ID, hidden, nil, nil, "x"); !errors.Is(err, cases.ErrNotFound) {
+		t.Fatalf("note on unpublished case: %v", err)
+	}
+	msgID := "7f0c6d0e-1111-4222-8333-944455556666"
+	onEntry, err := store.AddNote(ctx, u.ID, story, &suspectID, &msgID, "on an entry")
+	if err != nil || onEntry.ChatMessageID == nil || *onEntry.ChatMessageID != msgID {
+		t.Fatalf("note on a log entry: %+v %v", onEntry, err)
+	}
+	if err := store.DeleteNote(ctx, u.ID, onEntry.ID); err != nil {
+		t.Fatal(err)
+	}
+	notes, err := store.Notes(ctx, u.ID, story)
+	if err != nil || len(notes) != 2 || notes[0].Body != "second" || notes[0].ChatMessageID != nil || notes[0].SuspectID == nil || *notes[0].SuspectID != suspectID {
+		t.Fatalf("list notes: %+v %v", notes, err)
+	}
+	u2, err := user.NewPGStore(pool).Create(ctx, "watson", "w@x.co", "h", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theirs, _ := store.Notes(ctx, u2.ID, story); len(theirs) != 0 {
+		t.Fatalf("notes leaked to another user: %+v", theirs)
+	}
+	if err := store.DeleteNote(ctx, u2.ID, n1.ID); !errors.Is(err, cases.ErrNotFound) {
+		t.Fatalf("deleting someone else's note: %v", err)
+	}
+	if err := store.DeleteNote(ctx, u.ID, n1.ID); err != nil {
+		t.Fatal(err)
+	}
+	// the cap
+	for i := 0; i < cases.MaxNotesPerCase-1; i++ {
+		if _, err := store.AddNote(ctx, u.ID, story, nil, nil, "n"); err != nil {
+			t.Fatalf("note %d: %v", i, err)
+		}
+	}
+	if _, err := store.AddNote(ctx, u.ID, story, nil, nil, "one too many"); !errors.Is(err, cases.ErrNotesFull) {
+		t.Fatalf("over the cap: %v", err)
+	}
+	// removing a suspect keeps the note, untied
+	if _, err := pool.Exec(ctx, `DELETE FROM suspects WHERE id = $1`, suspectID); err != nil {
+		t.Fatal(err)
+	}
+	var tied int
+	mustScanInt := pool.QueryRow(ctx, `SELECT count(*) FROM case_notes WHERE body = 'second' AND suspect_id IS NULL`)
+	if err := mustScanInt.Scan(&tied); err != nil || tied != 1 {
+		t.Fatalf("note after suspect removal: %d %v", tied, err)
+	}
 }

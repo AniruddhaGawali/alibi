@@ -10,13 +10,13 @@ DELETE FROM active_case_locks
 WHERE story_id IN (SELECT id FROM stories WHERE title <> 'The Poisoned Earl Grey');
 DELETE FROM stories WHERE title <> 'The Poisoned Earl Grey';
 
-INSERT INTO stories (title, synopsis, thumbnail_url, difficulty_level, reward_trophies, reward_tokens)
-SELECT v.title, v.synopsis, v.thumbnail_url, v.difficulty_level, v.reward_trophies, v.reward_tokens
+INSERT INTO stories (title, synopsis, thumbnail_url, difficulty_level, reward_trophies)
+SELECT v.title, v.synopsis, v.thumbnail_url, v.difficulty_level, v.reward_trophies
 FROM (VALUES
     ('The Poisoned Earl Grey',
      'Lord Harrington was found dead in his study at 10:00 AM, a spilled cup of Earl Grey tea staining his oak desk. The coroner confirmed cyanide poisoning. Only four staff members and family had access to the study this morning. It is up to you to interrogate them, cross-reference their alibis, and point the finger at the true killer before your tokens run out.',
-     :'asset_base' || '/cases/case-01/thumbnail.webp', 'easy', 1, 5)
-) AS v(title, synopsis, thumbnail_url, difficulty_level, reward_trophies, reward_tokens)
+     :'asset_base' || '/cases/case-01/thumbnail.webp', 'easy', 1)
+) AS v(title, synopsis, thumbnail_url, difficulty_level, reward_trophies)
 WHERE NOT EXISTS (SELECT 1 FROM stories s WHERE s.title = v.title);
 
 -- Case #01 briefing: the plot, three scenes and four suspects. Upserted, so
@@ -62,6 +62,43 @@ WHERE s.title = 'The Poisoned Earl Grey'
 ON CONFLICT (case_id, name) DO UPDATE
     SET role = EXCLUDED.role, avatar_url = EXCLUDED.avatar_url, initial_testimony = EXCLUDED.initial_testimony,
         is_culprit = EXCLUDED.is_culprit, display_order = EXCLUDED.display_order;
+
+-- Case #01 interrogation personas (Phase 4.1): server-only prompt data. The
+-- confession trigger follows docs/stories/case-01-poisoned-earl-grey.md.
+UPDATE suspects AS x SET
+    relationship_to_victim = v.relationship,
+    persona                = v.persona,
+    public_alibi           = v.alibi,
+    hidden_truth           = v.truth,
+    confession_triggers    = v.triggers
+FROM stories s,
+     (VALUES
+        ('Lady Eleanor',
+         'his wife',
+         'Proud, cold and aristocratic. Sharp-tongued and highly defensive; treats the questioning as an insult to the family name.',
+         'In the rose garden all morning, tending the beds, until Thomas came running out.',
+         'She did not poison the tea. She has run up a massive gambling debt she has hidden from her husband and the police, and she is terrified it will come out and make her look guilty.',
+         'If the detective asks about money, debts, cards or why she is so defensive, she grows flustered and finally admits the gambling debt, while insisting it has nothing to do with the murder.'),
+        ('Thomas',
+         'his butler for twenty years',
+         'Fiercely loyal to the family, formal and precise, easily flustered when his routine is questioned.',
+         'Served his lordship his morning tea at 9:30 AM precisely, then polished the silver in the pantry.',
+         'He served the tea at 9:30 AM and did not poison it. Around 9:45 AM, on his way back from the pantry, he glimpsed Beatrice leaving the study, which she had no reason to enter; out of loyalty to the household he does not want to accuse a fellow servant.',
+         'If the detective presses him on whether anyone else went near the study after he served the tea, he admits, reluctantly, that he saw Beatrice coming out of the study at about 9:45 AM.'),
+        ('Arthur',
+         'his groundskeeper',
+         'Gruff, blunt and resentful; makes no secret that he disliked his lordship for underpaying him.',
+         'Mending the greenhouse door all morning.',
+         'He did not poison the tea and was at the greenhouse all morning. He openly hated Lord Harrington for paying him a pittance, and he keeps rat poison in the shed, which makes him nervous about being blamed.',
+         'If the detective asks about poisons, the shed or what he keeps for pests, he admits there is rat poison in the shed but swears it is arsenic, not cyanide, and that the shed stays locked.'),
+        ('Beatrice',
+         'his maid',
+         'Quiet, polite and eager to please; keeps her eyes down and her answers short.',
+         'Sweeping the upstairs corridor all morning; came down when Thomas shouted.',
+         'She poisoned the tea with cyanide at 9:45 AM. Lord Harrington had caught her stealing from the household and was going to have her arrested. She slipped into the study after Thomas served the tea and before the body was found at 10:00 AM.',
+         'She fiercely denies everything unless the detective asks who was last in the study, or confronts her with being seen near the study at 9:45 AM. Then she breaks down and confesses that she poisoned the tea because he was going to have her arrested for stealing.')
+     ) AS v(name, relationship, persona, alibi, truth, triggers)
+WHERE s.title = 'The Poisoned Earl Grey' AND x.case_id = s.id AND x.name = v.name;
 
 INSERT INTO users (username, email, password_hash, trophies, cases_solved, token_balance)
 VALUES

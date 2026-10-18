@@ -2,6 +2,7 @@ package cases
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,8 @@ type fakeStore struct {
 	briefing *Briefing
 	suspects []Suspect
 	err      error
+	notes    []Note
+	notesErr error
 	known    map[string]bool // cases Start accepts
 	started  int
 }
@@ -51,6 +54,22 @@ func (f *fakeStore) Start(_ context.Context, _, storyID string) (*Lock, error) {
 		f.lock = &Lock{CaseID: attempt, StoryID: storyID}
 	}
 	return f.lock, nil
+}
+
+func (f *fakeStore) Notes(context.Context, string, string) ([]Note, error) { return f.notes, f.err }
+func (f *fakeStore) AddNote(_ context.Context, _, _ string, suspectID, chatMessageID *string, body string) (*Note, error) {
+	if f.notesErr != nil {
+		return nil, f.notesErr
+	}
+	n := Note{ID: "n1", SuspectID: suspectID, ChatMessageID: chatMessageID, Body: body}
+	f.notes = append([]Note{n}, f.notes...)
+	return &n, nil
+}
+func (f *fakeStore) DeleteNote(_ context.Context, _, noteID string) error {
+	if noteID != "dddddddd-dddd-dddd-dddd-dddddddddddd" {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func errOr(err error) error {
@@ -145,5 +164,111 @@ func TestStart(t *testing.T) {
 	rec = do(h.Start, "POST", caseB)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "Finish your active case first") {
 		t.Fatalf("start other: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func notesReq(h http.HandlerFunc, method, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, "/api/cases/"+caseA+"/notes", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.SetPathValue("id", caseA)
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	return rec
+}
+
+func TestAddAndListNotes(t *testing.T) {
+	h, st := newHandler()
+	rec := notesReq(h.AddNote, "POST", `{"body":"  Beatrice never mentions the cup  ","suspect_id":"`+caseB+`"}`)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"body":"Beatrice never mentions the cup"`) {
+		t.Fatalf("add: %d %s", rec.Code, rec.Body)
+	}
+	if rec := notesReq(h.Notes, "GET", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "Beatrice never mentions the cup") {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+	for name, body := range map[string]string{
+		"empty":         `{"body":""}`,
+		"blank":         `{"body":"    "}`,
+		"too long":      `{"body":"` + strings.Repeat("x", 1001) + `"}`,
+		"bad suspect":   `{"body":"hi","suspect_id":"nope"}`,
+		"unknown field": `{"body":"hi","user_id":"x"}`,
+	} {
+		if rec := notesReq(h.AddNote, "POST", body); rec.Code != 422 && rec.Code != 400 {
+			t.Errorf("%s: %d", name, rec.Code)
+		}
+	}
+	st.notesErr = ErrBadSuspect
+	if rec := notesReq(h.AddNote, "POST", `{"body":"hi"}`); rec.Code != 422 {
+		t.Errorf("suspect of another case: %d", rec.Code)
+	}
+	st.notesErr = ErrNotesFull
+	if rec := notesReq(h.AddNote, "POST", `{"body":"hi"}`); rec.Code != http.StatusConflict {
+		t.Errorf("notes full: %d", rec.Code)
+	}
+}
+
+func TestDeleteNote(t *testing.T) {
+	h, _ := newHandler()
+	del := func(id string) int {
+		req := httptest.NewRequest("DELETE", "/", nil)
+		req.SetPathValue("id", caseA)
+		req.SetPathValue("note_id", id)
+		rec := httptest.NewRecorder()
+		h.DeleteNote(rec, req)
+		return rec.Code
+	}
+	if c := del("dddddddd-dddd-dddd-dddd-dddddddddddd"); c != 200 {
+		t.Errorf("own note: %d", c)
+	}
+	if c := del("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"); c != 404 {
+		t.Errorf("someone else's note: %d", c)
+	}
+	if c := del("junk"); c != 400 {
+		t.Errorf("bad id: %d", c)
+	}
+}
+
+type fakeLogs struct {
+	suspect string
+	err     error
+}
+
+func (f fakeLogs) SuspectOf(_ context.Context, userID, caseID, id string) (string, bool, error) {
+	if f.err != nil {
+		return "", false, f.err
+	}
+	// only entry "m1" of the caller's own case exists
+	return f.suspect, userID == uid && caseID == caseA && id == "m1", nil
+}
+
+func TestNoteTiedToLogEntry(t *testing.T) {
+	h, _ := newHandler()
+	h.WithLogs(fakeLogs{suspect: caseB})
+
+	rec := notesReq(h.AddNote, "POST", `{"body":"he lied here","chat_message_id":"m1"}`)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"chat_message_id":"m1"`) || !strings.Contains(rec.Body.String(), `"suspect_id":"`+caseB+`"`) {
+		t.Fatalf("tie to entry (suspect taken from the entry): %d %s", rec.Code, rec.Body)
+	}
+	if rec := notesReq(h.AddNote, "POST", `{"body":"x","chat_message_id":"m1","suspect_id":"`+caseB+`"}`); rec.Code != http.StatusCreated {
+		t.Fatalf("matching suspect: %d", rec.Code)
+	}
+	for name, body := range map[string]string{
+		"unknown entry": `{"body":"x","chat_message_id":"nope"}`,
+		"other suspect": `{"body":"x","chat_message_id":"m1","suspect_id":"` + caseA + `"}`,
+		"empty id":      `{"body":"x","chat_message_id":""}`,
+		"id too long":   `{"body":"x","chat_message_id":"` + strings.Repeat("a", 65) + `"}`,
+	} {
+		if rec := notesReq(h.AddNote, "POST", body); rec.Code != 422 {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+	}
+
+	// A lookup failure is a 500, not a saved note; without a lookup the feature is off.
+	h.WithLogs(fakeLogs{err: errors.New("mongo down")})
+	if rec := notesReq(h.AddNote, "POST", `{"body":"x","chat_message_id":"m1"}`); rec.Code != 500 {
+		t.Fatalf("lookup error: %d", rec.Code)
+	}
+	h.logs = nil
+	if rec := notesReq(h.AddNote, "POST", `{"body":"x","chat_message_id":"m1"}`); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no lookup: %d", rec.Code)
 	}
 }

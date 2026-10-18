@@ -53,6 +53,10 @@ type PGStore struct{ q *dbgen.Queries }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
 
+// MaxTokenBalance is the most question tokens a player can hold. Every grant,
+// refund and reset stops here; the database also refuses more (migration 00013).
+const MaxTokenBalance = 10
+
 // ErrInsufficientTokens is returned by AdjustTokenBalance when the balance
 // would go below zero. The wallet package re-exports the same value.
 var ErrInsufficientTokens = errors.New("wallet: insufficient tokens")
@@ -147,11 +151,18 @@ func (s *PGStore) GetTokenBalance(ctx context.Context, id string) (int64, error)
 	return n, nil
 }
 
-// AdjustTokenBalance atomically adds delta and returns the new balance. The
-// query refuses to go below zero; we then tell "unknown user" from
-// "insufficient tokens" with a second read.
+// ResetAllTokenBalances sets every user's balance to tokens (at most
+// MaxTokenBalance) and returns how many rows changed (the daily reset).
+func (s *PGStore) ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error) {
+	return s.q.ResetAllTokenBalances(ctx, min(tokens, MaxTokenBalance))
+}
+
+// AdjustTokenBalance atomically adds delta and returns the new balance, which
+// never exceeds MaxTokenBalance (extra tokens are simply lost). The query refuses
+// to go below zero; we then tell "unknown user" from "insufficient tokens" with a
+// second read.
 func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta int64) (int64, error) {
-	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta})
+	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta, Cap: MaxTokenBalance})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gErr := s.GetTokenBalance(ctx, id); gErr != nil {
 			return 0, gErr

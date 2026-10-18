@@ -9,13 +9,17 @@ import (
 	"syscall"
 	"time"
 
+	"backend/internal/admin"
 	"backend/internal/auth"
 	"backend/internal/cases"
+	"backend/internal/chat"
 	"backend/internal/config"
 	"backend/internal/dashboard"
 	"backend/internal/db"
 	"backend/internal/email"
 	"backend/internal/health"
+	"backend/internal/interrogation"
+	"backend/internal/jobs"
 	"backend/internal/llm"
 	"backend/internal/middleware"
 	"backend/internal/queue"
@@ -28,7 +32,6 @@ import (
 
 const (
 	shutdownTimeout = 10 * time.Second
-	initialTokens   = 10 // question tokens every new account starts with
 
 	avatarUploadsPerHour = 5 // custom avatar uploads allowed per user per hour
 )
@@ -95,7 +98,7 @@ func run() error {
 		}
 	}()
 
-	llmClients, err := llm.NewClients(cfg.OllamaHost, cfg.OpenRouterAPIKey)
+	llmClients, err := llm.NewClients(cfg.OllamaHost, cfg.OpenRouterAPIKey, cfg.LLMTimeout)
 	if err != nil {
 		return err
 	}
@@ -137,7 +140,7 @@ func run() error {
 		Mail:           queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen)), // the email worker consumes it
 		Coins:          walletSvc,
 		TrustedProxies: cfg.TrustedProxies,
-		InitialTokens:  initialTokens,
+		InitialTokens:  cfg.DailyTokens, // a new account starts with one day's tokens
 		HashWorkers:    cfg.HashWorkers,
 	})
 	userOpts := []user.Option{user.WithUploadLimiter(user.NewRedisUploadLimiter(rdb, avatarUploadsPerHour, time.Hour))}
@@ -146,7 +149,42 @@ func run() error {
 	}
 	userH := user.NewHandler(userStore, walletSvc, auth.UserID, userOpts...)
 
-	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID)
+	// Chat storage (P4.3): answered questions go to queue:chat:events, and the chat
+	// storage worker below moves them into MongoDB.
+	chatStore := chat.NewMongoStore(mongoClient.Database(cfg.MongoDatabase))
+	indexCtx, cancelIndex := context.WithTimeout(context.Background(), 30*time.Second)
+	err = chatStore.EnsureIndexes(indexCtx)
+	cancelIndex()
+	if err != nil {
+		return err
+	}
+	chatBroker := queue.NewRedisListBroker(rdb, chat.DLQ)
+	chatH := chat.NewHandler(chatStore, auth.UserID)
+	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID).WithLogs(chatStore) // notes can point at log entries
+
+	interrogationSvc := interrogation.NewService(interrogation.NewPGStore(pg), llmClients, walletSvc, chatBroker, chatStore)
+	defer interrogationSvc.Wait() // let queued chat events finish publishing on shutdown
+
+	// Background work in this process: the chat storage worker and the daily token
+	// reset (P4.2). Both stop when run returns. Deferred calls run last-in first-out,
+	// so they stop before the Redis and MongoDB clients close.
+	bgCtx, stopBackground := context.WithCancel(context.Background())
+	chatWorkerDone := make(chan struct{})
+	go func() {
+		defer close(chatWorkerDone)
+		chat.NewWorker(chatBroker, chatStore).Run(bgCtx, cfg.ChatWorkerConcurrency)
+	}()
+	defer func() {
+		stopBackground()
+		<-chatWorkerDone
+	}()
+	resetCron, err := jobs.StartTokenReset(cfg.TokenResetCron, cfg.TokenResetTimezone, cfg.DailyTokens, walletSvc, rdb)
+	if err != nil {
+		return err
+	}
+	defer func() { <-resetCron.Stop().Done() }() // waits for a running reset to finish
+	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID)
+	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID)
 	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, dashboard.NewLeaderboard(rdb), auth.UserID)
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
@@ -160,6 +198,13 @@ func run() error {
 	mux.HandleFunc("GET /api/cases/{id}/briefing", casesH.Briefing)
 	mux.HandleFunc("GET /api/cases/{id}/suspects", casesH.Suspects)
 	mux.HandleFunc("POST /api/cases/{id}/start", casesH.Start)
+	mux.HandleFunc("GET /api/cases/{id}/notes", casesH.Notes)
+	mux.HandleFunc("POST /api/cases/{id}/notes", casesH.AddNote)
+	mux.HandleFunc("DELETE /api/cases/{id}/notes/{note_id}", casesH.DeleteNote)
+	mux.HandleFunc("POST /api/cases/{id}/suspects/{suspect_id}/interrogate", interrogationH.Ask)
+	mux.HandleFunc("GET /api/chat/{case_id}/{suspect_id}", chatH.History)
+	mux.HandleFunc("POST /api/admin/cases", adminH.RequireAdmin(adminH.CreateCase))
+	mux.HandleFunc("PATCH /api/admin/cases/{id}", adminH.RequireAdmin(adminH.UpdateCase))
 	mux.HandleFunc("GET /api/dashboard/stories", dashH.Stories)
 	mux.HandleFunc("GET /api/dashboard/stats", dashH.Stats)
 	mux.HandleFunc("GET /api/dashboard/leaderboard", dashH.Leaderboard)

@@ -1,14 +1,14 @@
 import { redirect } from 'react-router'
-import { getJwt } from '@/utils/cookieHelpers'
+import { hasSession } from '@/utils/cookieHelpers'
 
 /** Login, signup and OTP pages: a signed-in user goes straight to the dashboard. */
 export function guestOnlyLoader() {
-  if (getJwt()) throw redirect('/dashboard')
+  if (hasSession()) throw redirect('/dashboard')
   return null
 }
 
-/** Pages that need a signed-in user. */
+/** Pages that need a signed-in user. An expired access token is fine: the API client refreshes it. */
 export function requireAuthLoader() {
-  if (!getJwt()) throw redirect('/login')
+  if (!hasSession()) throw redirect('/login')
   return null
 }
