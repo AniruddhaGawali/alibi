@@ -10,13 +10,16 @@ import (
 	"time"
 
 	"backend/internal/auth"
+	"backend/internal/cases"
 	"backend/internal/config"
+	"backend/internal/dashboard"
 	"backend/internal/db"
 	"backend/internal/email"
 	"backend/internal/health"
 	"backend/internal/llm"
 	"backend/internal/middleware"
 	"backend/internal/queue"
+	"backend/internal/storage"
 	"backend/internal/user"
 	"backend/internal/wallet"
 	"backend/pkg/logger"
@@ -98,11 +101,21 @@ func run() error {
 	}
 	llmClients.PingOllama(context.Background())
 
-	checker := health.New(map[string]health.Check{
+	checks := map[string]health.Check{
 		"postgres": pg.Ping,
 		"mongodb":  func(ctx context.Context) error { return mongoClient.Ping(ctx, nil) },
 		"redis":    func(ctx context.Context) error { return rdb.Ping(ctx).Err() },
-	})
+	}
+	// Image storage behind storage.Provider: swap NewSupabaseProvider for an S3
+	// or GCS implementation without touching the handlers.
+	var images storage.Provider
+	if cfg.SupabaseURL != "" {
+		images = storage.NewSupabaseProvider(cfg.SupabaseURL, cfg.SupabaseServiceRoleKey, cfg.SupabaseBucket)
+		checks["storage"] = images.Ping
+	} else {
+		utils.LogWarn("SUPABASE_URL not set: custom avatar uploads are disabled")
+	}
+	checker := health.New(checks)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", checker.Handler)
@@ -127,8 +140,14 @@ func run() error {
 		InitialTokens:  initialTokens,
 		HashWorkers:    cfg.HashWorkers,
 	})
-	userH := user.NewHandler(userStore, walletSvc, auth.UserID,
-		user.WithUploadLimiter(user.NewRedisUploadLimiter(rdb, avatarUploadsPerHour, time.Hour)))
+	userOpts := []user.Option{user.WithUploadLimiter(user.NewRedisUploadLimiter(rdb, avatarUploadsPerHour, time.Hour))}
+	if images != nil {
+		userOpts = append(userOpts, user.WithImageStorage(images))
+	}
+	userH := user.NewHandler(userStore, walletSvc, auth.UserID, userOpts...)
+
+	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID)
+	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, dashboard.NewLeaderboard(rdb), auth.UserID)
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
 	mux.HandleFunc("POST /api/auth/resend-otp", authH.ResendOTP)
@@ -138,7 +157,13 @@ func run() error {
 	mux.HandleFunc("POST /api/auth/logout", authH.Logout)
 	mux.HandleFunc("GET /api/user/profile", userH.Profile)
 	mux.HandleFunc("POST /api/user/avatar", userH.SetAvatar)
-	mux.HandleFunc("GET /api/user/avatars/{id}", userH.Avatar)
+	mux.HandleFunc("GET /api/cases/{id}/briefing", casesH.Briefing)
+	mux.HandleFunc("GET /api/cases/{id}/suspects", casesH.Suspects)
+	mux.HandleFunc("POST /api/cases/{id}/start", casesH.Start)
+	mux.HandleFunc("GET /api/dashboard/stories", dashH.Stories)
+	mux.HandleFunc("GET /api/dashboard/stats", dashH.Stats)
+	mux.HandleFunc("GET /api/dashboard/leaderboard", dashH.Leaderboard)
+	mux.HandleFunc("GET /api/dashboard/active-case", dashH.ActiveCase)
 
 	// Deny by default: every route needs a valid JWT unless it is listed here.
 	public := auth.NewPublicRoutes(
@@ -148,13 +173,12 @@ func run() error {
 		"POST /api/auth/verify-otp",
 		"POST /api/auth/login",
 		"POST /api/auth/refresh",
-		"GET /api/user/avatars/", // <img> tags cannot send an Authorization header
 	)
 	protected := auth.Middleware(tokens, blacklist, public)(mux)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           middleware.Logging(protected),
+		Handler:           middleware.Logging(middleware.CORS(cfg.CORSOrigins)(protected)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      cfg.WriteTimeout,

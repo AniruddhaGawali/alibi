@@ -1,5 +1,7 @@
 # Backend tasks. Run from backend/.
 #   make sqlc            regenerate type-safe query code (after editing sql/)
+#   make seed-dev        load test stories + leaderboard users into the docker-compose DB
+#   make assets-upload   upload the WebP images in frontend/public to the Supabase bucket
 #   make migrate-new name=add_cases
 #   make migrate-up | migrate-down | migrate-status
 
@@ -11,7 +13,7 @@ GOOSE      ?= goose
 SQLC       ?= sqlc
 
 .DEFAULT_GOAL := help
-.PHONY: help run-api run-worker emailctl-stats emailctl-list emailctl-requeue emailctl-purge docker-up docker-down docker-logs build test check sqlc sqlc-vet sqlc-diff migrate-new migrate-up migrate-down migrate-status
+.PHONY: help run-api run-worker emailctl-stats emailctl-list emailctl-requeue emailctl-purge docker-up docker-down docker-logs build test check sqlc sqlc-vet sqlc-diff migrate-new migrate-up migrate-down migrate-status seed-dev assets-upload
 
 help: ## Show this help
 	@awk -F':.*## ' '/^[a-zA-Z_-]+:.*## /{printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -74,3 +76,9 @@ migrate-down: ## Roll back the latest migration
 
 migrate-status: ## Show applied / pending migrations
 	$(GOOSE) -dir $(MIGRATIONS) postgres "$(POSTGRES_URI)" status
+
+seed-dev: ## Load test stories and leaderboard users into the docker-compose DB (dev only)
+	./sql/seed/seed-dev.sh
+
+assets-upload: ## Upload WebP images in src= (default ../frontend/public) to the Supabase bucket, same paths
+	go run ./cmd/assetctl upload-dir $(or $(src),../frontend/public)

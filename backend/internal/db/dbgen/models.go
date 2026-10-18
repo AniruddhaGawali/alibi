@@ -8,20 +8,55 @@ import (
 	"time"
 )
 
-type User struct {
-	ID              string
-	Username        string
-	Email           string
-	PasswordHash    string
-	AvatarDefault   *int16
-	AvatarUpdatedAt *time.Time
-	Trophies        int32
-	TokenBalance    int64
-	CreatedAt       time.Time
+type ActiveCaseLock struct {
+	UserID   string
+	CaseID   string
+	StoryID  string
+	LockedAt time.Time
 }
 
-type UserAvatar struct {
-	UserID    string
-	Data      []byte
-	UpdatedAt time.Time
+type CaseScene struct {
+	ID           string
+	CaseID       string
+	SceneName    string
+	ImageUrl     string
+	DisplayOrder int32
+}
+
+type Story struct {
+	ID              string
+	Title           string
+	Synopsis        string
+	ThumbnailUrl    string
+	DifficultyLevel string
+	RewardTrophies  int32
+	RewardTokens    int32
+	IsPublished     bool
+	CreatedAt       time.Time
+	MainPlot        string
+}
+
+type Suspect struct {
+	ID               string
+	CaseID           string
+	Name             string
+	Role             string
+	AvatarUrl        string
+	InitialTestimony string
+	IsCulprit        bool
+	DisplayOrder     int32
+}
+
+type User struct {
+	ID            string
+	Username      string
+	Email         string
+	PasswordHash  string
+	AvatarDefault *int16
+	Trophies      int32
+	TokenBalance  int64
+	CreatedAt     time.Time
+	CasesSolved   int32
+	AvatarUrl     *string
+	AvatarPath    *string
 }

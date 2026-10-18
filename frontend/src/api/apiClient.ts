@@ -1,6 +1,6 @@
 import { getJwt } from '../utils/cookieHelpers'
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
+export const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8080'
 
 export class ApiError extends Error {
   status: number
@@ -29,7 +29,8 @@ interface Envelope<T> {
 
 export async function apiClient<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body !== undefined && !headers.has('Content-Type')) {
+  // FormData sets its own multipart boundary header; everything else is JSON.
+  if (init.body !== undefined && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
   headers.set('Accept', 'application/json')

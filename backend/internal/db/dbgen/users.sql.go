@@ -36,7 +36,7 @@ func (q *Queries) CheckAvailability(ctx context.Context, arg CheckAvailabilityPa
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, token_balance)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, avatar_default, avatar_updated_at, trophies, token_balance, created_at
+RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path
 `
 
 type CreateUserParams struct {
@@ -60,16 +60,18 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.PasswordHash,
 		&i.AvatarDefault,
-		&i.AvatarUpdatedAt,
 		&i.Trophies,
 		&i.TokenBalance,
 		&i.CreatedAt,
+		&i.CasesSolved,
+		&i.AvatarUrl,
+		&i.AvatarPath,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, avatar_default, avatar_updated_at, trophies, token_balance, created_at FROM users WHERE lower(email) = lower($1)
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -81,16 +83,18 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Email,
 		&i.PasswordHash,
 		&i.AvatarDefault,
-		&i.AvatarUpdatedAt,
 		&i.Trophies,
 		&i.TokenBalance,
 		&i.CreatedAt,
+		&i.CasesSolved,
+		&i.AvatarUrl,
+		&i.AvatarPath,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, avatar_default, avatar_updated_at, trophies, token_balance, created_at FROM users WHERE id = $1
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -102,10 +106,12 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.Email,
 		&i.PasswordHash,
 		&i.AvatarDefault,
-		&i.AvatarUpdatedAt,
 		&i.Trophies,
 		&i.TokenBalance,
 		&i.CreatedAt,
+		&i.CasesSolved,
+		&i.AvatarUrl,
+		&i.AvatarPath,
 	)
 	return i, err
 }

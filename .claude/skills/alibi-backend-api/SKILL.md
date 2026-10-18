@@ -69,7 +69,7 @@ utils.ErrorResponse(w, http.StatusBadRequest, "invalid body", nil)  // {"status"
 - `message` is safe to show a user. Put field-level validation problems in `details` (e.g. `map[string]string{"email": "invalid"}`).
 - Never leak internal errors (SQL, stack traces, driver text) in `message` or `details`. Log the real error, return a generic message.
 - Return right after writing an error response so you don't write twice.
-- The only exception to the JSON envelope is serving binary content (such as `GET /api/user/avatars/{id}`), which uses `http.ServeContent`; its errors still use `ErrorResponse`.
+- Handlers never serve image bytes: images live in the object store and the API returns their public URL (see Images below).
 
 ## 3. Logging: every API, via the logger
 
@@ -119,11 +119,25 @@ sqlc.yaml, Makefile
 ## Auth in handlers
 
 - **Every route requires a valid JWT by default.** `auth.Middleware` (installed in `cmd/api/main.go` inside `middleware.Logging`) runs before the mux: it answers 401 for a missing, malformed, expired, forged, wrong-type (refresh) or blacklisted access token and 503 if the blacklist cannot be checked, and only then passes the request on with the claims in the context. Handlers never re-check the token; read the caller with `auth.UserID(r.Context())`.
-- **Public routes are an explicit allow-list**, `auth.NewPublicRoutes("METHOD /path", ...)` in `main.go` (a trailing `/` means "everything under it"). Currently `GET /health`, `POST /api/auth/{signup,login,refresh}` and `GET /api/user/avatars/`. Unknown paths and wrong methods get 401 too, so the API does not reveal which routes exist. Never add a route to the list just to make a test or a frontend call pass.
+- **Public routes are an explicit allow-list**, `auth.NewPublicRoutes("METHOD /path", ...)` in `main.go` (a trailing `/` means "everything under it"). Currently `GET /health` and `POST /api/auth/{signup,resend-otp,verify-otp,login,refresh}`. Unknown paths and wrong methods get 401 too, so the API does not reveal which routes exist. Never add a route to the list just to make a test or a frontend call pass.
 - **Signup is OTP-based and creates no user until the code is verified.** `signup` checks availability, takes an OTP request from the budget (`auth.Limiter`, Lua-atomic, 429 with `Retry-After`: per email a 60 s cooldown and 5/day, per IP 10 per 15 min), stores `otp:signup:<email>` (10 min, holding only an HMAC of the code) and queues the email; `verify-otp` creates the user with the 10 starting tokens and signs in; `resend-otp` issues a fresh code. Wrong codes are capped (`OTP_MAX_ATTEMPTS`) by `OTPStore.Verify`, which charges the attempt atomically *before* comparing. Every cheap-to-abuse endpoint first charges the per-IP budget (`Handler.gateIP`) before any DB or bcrypt work; login adds per-email/IP lockout with exponential backoff, and bcrypt runs under `Handler.acquireHash`. Any failure after the cooldown was taken must `Release` it. Use `utils.ClientIP(r, cfg.TrustedProxies)` for client IPs: forwarding headers are only believed from trusted proxies.
 - Access tokens are short-lived JWTs (`sub`, `email`, `jti`, `exp`); refresh tokens rotate (each works once). Logout needs the access token header and the `refresh_token` body and blacklists both in Redis (`blacklist:jwt:{jti}` = `true`) for their remaining lifetime.
 - Passwords are hashed with bcrypt and never logged or returned. OTPs are secrets: never log an `email.Message`.
 - Question tokens (the game currency) go through `wallet.Service` (`Balance`, `Grant`, `Spend`, `Cache`), never by writing the Redis key (`user:coins:{id}`) or the column directly.
+
+## Images: object storage, WebP only
+
+Images (avatars, case thumbnails, scenes, suspect portraits) never go in Postgres. They live in a bucket behind `storage.Provider` (`internal/storage`): `UploadImage(ctx, path, data) (publicURL, error)`, `Delete`, `PublicURL`, `Ping`. Today that is `SupabaseProvider` (REST API with `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_BUCKET_NAME`); an S3 or GCS provider only needs to implement the interface and be chosen in `cmd/api/main.go`, with no handler changes.
+
+- **WebP only.** The provider rejects anything that is not a WebP file (`storage.ErrNotWebP`) and any path that is not a clean relative `….webp` (`storage.ErrInvalidPath`). Handlers that accept user images decode, resize and re-encode them to WebP first (see `user/avatar.go`, `github.com/gen2brain/webp`, pure Go, works with `CGO_ENABLED=0`).
+- **Bucket layout** mirrors `frontend/public`: `avatars/default/avatar-N.webp`, `avatars/<user_id>_<uuid>.webp` (custom uploads), `cases/<case>/thumbnail.webp`, `cases/<case>/scenes/…`, `cases/<case>/suspects/…`.
+- **Unique names, no overwrites.** Give every upload a fresh name (UUID) so URLs can be cached forever. Store the public URL for the client and the object path for cleanup (`users.avatar_url` / `avatar_path`); when an image is replaced, delete the old object best-effort (log on failure, never fail the request). If the DB write fails after an upload, delete the new object.
+- **Optional dependency.** With `SUPABASE_URL` unset the API starts with uploads disabled (503 on custom avatars) and no `storage` health check; when set, `/health` pings the bucket.
+- **Manual uploads** until the admin panel exists: `make assets-upload` (`cmd/assetctl`) uploads every WebP under `frontend/public` to the same path and refuses the whole batch if any file is not WebP.
+
+## Case data: never leak the solution
+
+Anything a client can read about a case (`internal/cases`) comes from queries that list their columns explicitly and a response struct that has no field for solution data: `suspects.is_culprit` and any prompt/truth column are server-only (accusation evaluation, LLM prompts). Never `SELECT *` from `suspects` or `stories` for a client response, and add a test that the JSON does not contain "culprit". A player locked into one case may only read that case's dossier (403 otherwise); starting a case while locked into another is a 400.
 
 ## Email: never send mail from a handler
 
@@ -163,6 +177,6 @@ Handlers go under `backend/internal/` (a package per domain, e.g. `internal/stor
 
 Add tests next to new code (`*_test.go`):
 - Handlers: `httptest` with a fake store; `miniredis` for Redis-backed code.
-- Stores and SQL: a test gated on `TEST_POSTGRES_URI` (see `internal/user/store_integration_test.go`) that runs the real migrations on a throwaway Postgres (`docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw postgres:16`). Add one whenever you add queries with non-trivial SQL (constraints, CTEs, atomic updates).
+- Stores and SQL: a test gated on `TEST_POSTGRES_URI` (see `internal/user/store_integration_test.go`) that runs the real migrations on a throwaway Postgres (`docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw postgres:18`). Add one whenever you add queries with non-trivial SQL (constraints, CTEs, atomic updates).
 
 Checks before finishing: `cd backend && go build ./... && go vet ./... && go test ./... && go mod tidy -diff`, plus `make sqlc` and `make sqlc-diff` if anything under `sql/` changed. Then tell the frontend side the new path and response type so `src/api/` can be added (see the `alibi-api` skill).

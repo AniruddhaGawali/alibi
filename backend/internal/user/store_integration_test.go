@@ -56,7 +56,7 @@ func throwawayDatabase(t *testing.T, adminURI string) *pgxpool.Pool {
 // permission to CREATE DATABASE and works in a throwaway database of its own, so
 // any server is safe to point it at:
 //
-//	docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw postgres:16
+//	docker run --rm -d -p 55432:5432 -e POSTGRES_PASSWORD=pw postgres:18
 //	TEST_POSTGRES_URI=postgres://postgres:pw@localhost:55432/postgres go test ./internal/user
 func TestPGStore(t *testing.T) {
 	uri := os.Getenv("TEST_POSTGRES_URI")
@@ -86,7 +86,7 @@ func TestPGStore(t *testing.T) {
 
 	s := user.NewPGStore(pool)
 	u, err := s.Create(ctx, "sherlock", "s@x.co", "hash", 10)
-	if err != nil || u.HasAvatar || u.AvatarDefault != nil {
+	if err != nil || u.AvatarURL != nil || u.AvatarDefault != nil {
 		t.Fatalf("create: %+v %v", u, err)
 	}
 	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 10 {
@@ -108,50 +108,35 @@ func TestPGStore(t *testing.T) {
 		t.Fatalf("by email: %v", err)
 	}
 
-	if _, _, err := s.GetAvatar(ctx, u.ID); !errors.Is(err, user.ErrNotFound) {
-		t.Fatalf("no avatar yet: %v", err)
+	// Custom avatars: the store keeps the public URL and object path, and hands
+	// back the replaced path so the image can be deleted from storage.
+	if old, err := s.SetAvatarCustom(ctx, u.ID, "https://cdn/a.webp", "avatars/a.webp"); err != nil || old != "" {
+		t.Fatalf("first custom: old=%q err=%v", old, err)
 	}
-	if _, err := s.SetAvatarCustom(ctx, u.ID, []byte{0xFF, 0xD8, 1, 2, 3}); err != nil {
-		t.Fatal(err)
-	}
-	img, at, err := s.GetAvatar(ctx, u.ID)
-	if err != nil || len(img) != 5 || at.IsZero() {
-		t.Fatalf("get avatar: %v %v", img, err)
-	}
-	if at2, err := s.AvatarUpdatedAt(ctx, u.ID); err != nil || !at2.Equal(at) {
-		t.Fatalf("AvatarUpdatedAt = %v %v, want %v", at2, err, at)
-	}
-	if _, err := s.SetAvatarCustom(ctx, u.ID, make([]byte, 1<<20+1)); err == nil {
-		t.Fatal("an image over 1 MB must violate user_avatars_size")
-	}
-	if _, err := s.SetAvatarCustom(ctx, u.ID, []byte{9, 9}); err != nil { // replace, not duplicate
-		t.Fatal(err)
-	}
-	if img, _, _ := s.GetAvatar(ctx, u.ID); len(img) != 2 {
-		t.Fatalf("avatar not replaced: %v", img)
-	}
-	if _, err := s.SetAvatarCustom(ctx, "00000000-0000-0000-0000-000000000000", []byte{1}); !errors.Is(err, user.ErrNotFound) {
-		t.Fatalf("custom avatar for unknown user: %v", err)
+	if old, err := s.SetAvatarCustom(ctx, u.ID, "https://cdn/b.webp", "avatars/b.webp"); err != nil || old != "avatars/a.webp" {
+		t.Fatalf("replace custom: old=%q err=%v", old, err)
 	}
 	got, _ := s.GetByID(ctx, u.ID)
-	if !got.HasAvatar || got.AvatarDefault != nil || got.AvatarUpdatedAt == nil {
+	if got.AvatarURL == nil || *got.AvatarURL != "https://cdn/b.webp" || got.AvatarDefault != nil {
 		t.Fatalf("after custom: %+v", got)
 	}
-
-	if err := s.SetAvatarDefault(ctx, u.ID, 3); err != nil {
-		t.Fatal(err)
+	if _, err := s.SetAvatarCustom(ctx, "00000000-0000-0000-0000-000000000000", "u", "p.webp"); !errors.Is(err, user.ErrNotFound) {
+		t.Fatalf("custom avatar for unknown user: %v", err)
+	}
+	if old, err := s.SetAvatarDefault(ctx, u.ID, 3); err != nil || old != "avatars/b.webp" {
+		t.Fatalf("default: old=%q err=%v", old, err)
 	}
 	got, _ = s.GetByID(ctx, u.ID)
-	if got.HasAvatar || got.AvatarDefault == nil || *got.AvatarDefault != 3 {
+	if got.AvatarURL != nil || got.AvatarDefault == nil || *got.AvatarDefault != 3 {
 		t.Fatalf("after default: %+v", got)
 	}
-	if _, _, err := s.GetAvatar(ctx, u.ID); !errors.Is(err, user.ErrNotFound) {
-		t.Fatalf("custom image should be deleted when a default is chosen: %v", err)
+	if old, err := s.SetAvatarDefault(ctx, u.ID, 2); err != nil || old != "" {
+		t.Fatalf("default again: old=%q err=%v", old, err)
 	}
-	if err := s.SetAvatarDefault(ctx, u.ID, 9); err == nil {
+	if _, err := s.SetAvatarDefault(ctx, u.ID, 9); err == nil {
 		t.Fatal("avatar 9 should violate the CHECK constraint")
 	}
-	if err := s.SetAvatarDefault(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, user.ErrNotFound) {
+	if _, err := s.SetAvatarDefault(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, user.ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)
 	}
 

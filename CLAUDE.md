@@ -6,10 +6,10 @@ AI detective mystery game. Go backend in `backend/`, Vite + React 19 + TypeScrip
 
 Project skills are indexed in `.claude/skills/INDEX.md` (path, purpose and trigger for each). Check it before starting work and load every skill that applies:
 
-- `alibi-ui` — frontend UI: shadcn components, golden-sunset theme (`.claude/skills/alibi-ui/SKILL.md`)
+- `alibi-ui` — frontend UI: shadcn components, Remix icons only, golden-sunset theme (`.claude/skills/alibi-ui/SKILL.md`)
 - `alibi-forms` — forms with `components/form` and zod (`.claude/skills/alibi-forms/SKILL.md`)
 - `alibi-api` — frontend API calls via `createApi` hooks (`.claude/skills/alibi-api/SKILL.md`)
-- `alibi-backend-api` — Go backend: input validation, JSON responses, logging, errors/startup, queues, health, tests, and the goose + sqlc database workflow (`.claude/skills/alibi-backend-api/SKILL.md`)
+- `alibi-backend-api` — Go backend: input validation, JSON responses, logging, errors/startup, queues, health, image storage (Supabase, WebP only), tests, and the goose + sqlc database workflow (`.claude/skills/alibi-backend-api/SKILL.md`)
 
 When you add or change a skill, update `INDEX.md` and this list.
 

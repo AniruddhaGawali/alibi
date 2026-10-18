@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -11,18 +12,18 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"backend/internal/storage"
+	"github.com/gen2brain/webp"
 )
 
 type fakeStore struct {
-	u     *User
-	image []byte
-	at    time.Time
-
-	metaReads, imageReads int
+	u       *User
+	path    string // object path of the custom avatar
+	failSet error
 }
 
 func (f *fakeStore) Create(context.Context, string, string, string, int) (*User, error) {
@@ -33,30 +34,47 @@ func (f *fakeStore) Availability(context.Context, string, string) (bool, bool, e
 }
 func (f *fakeStore) GetByEmail(context.Context, string) (*User, error) { return f.u, nil }
 func (f *fakeStore) GetByID(context.Context, string) (*User, error)    { return f.u, nil }
-func (f *fakeStore) SetAvatarDefault(_ context.Context, _ string, n int) error {
-	f.u.AvatarDefault, f.u.HasAvatar, f.image, f.u.AvatarUpdatedAt = &n, false, nil, nil
-	return nil
+func (f *fakeStore) SetAvatarDefault(_ context.Context, _ string, n int) (string, error) {
+	old := f.path
+	f.u.AvatarDefault, f.u.AvatarURL, f.path = &n, nil, ""
+	return old, nil
 }
-func (f *fakeStore) SetAvatarCustom(_ context.Context, _ string, jpg []byte) (time.Time, error) {
-	f.at = time.Unix(1_700_000_000, 0)
-	f.image, f.u.HasAvatar, f.u.AvatarUpdatedAt, f.u.AvatarDefault = jpg, true, &f.at, nil
-	return f.at, nil
-}
-func (f *fakeStore) GetAvatar(context.Context, string) ([]byte, time.Time, error) {
-	f.imageReads++
-	if f.image == nil {
-		return nil, time.Time{}, ErrNotFound
+func (f *fakeStore) SetAvatarCustom(_ context.Context, _ string, url, path string) (string, error) {
+	if f.failSet != nil {
+		return "", f.failSet
 	}
-	return f.image, f.at, nil
+	old := f.path
+	f.u.AvatarDefault, f.u.AvatarURL, f.path = nil, &url, path
+	return old, nil
 }
 
-func (f *fakeStore) AvatarUpdatedAt(context.Context, string) (time.Time, error) {
-	f.metaReads++
-	if f.image == nil {
-		return time.Time{}, ErrNotFound
-	}
-	return f.at, nil
+// fakeImages is an in-memory storage.Provider.
+type fakeImages struct {
+	objects   map[string][]byte
+	deleted   []string
+	failWrite error
 }
+
+func (f *fakeImages) UploadImage(_ context.Context, path string, data []byte) (string, error) {
+	if f.failWrite != nil {
+		return "", f.failWrite
+	}
+	if err := storage.CheckPath(path); err != nil {
+		return "", err
+	}
+	if !storage.IsWebP(data) {
+		return "", storage.ErrNotWebP
+	}
+	f.objects[path] = data
+	return f.PublicURL(path), nil
+}
+func (f *fakeImages) Delete(_ context.Context, path string) error {
+	delete(f.objects, path)
+	f.deleted = append(f.deleted, path)
+	return nil
+}
+func (f *fakeImages) PublicURL(path string) string { return "https://cdn.test/" + path }
+func (f *fakeImages) Ping(context.Context) error   { return nil }
 
 // fakeBalances stands in for wallet.Service.
 type fakeBalances struct{ n int64 }
@@ -64,11 +82,17 @@ type fakeBalances struct{ n int64 }
 func (f *fakeBalances) Balance(context.Context, string) (int64, error) { return f.n, nil }
 
 func newHandler(t *testing.T) (*Handler, *fakeStore, *fakeBalances) {
+	h, st, bal, _ := newHandlerWithImages(t)
+	return h, st, bal
+}
+
+func newHandlerWithImages(t *testing.T) (*Handler, *fakeStore, *fakeBalances, *fakeImages) {
 	t.Helper()
 	bal := &fakeBalances{}
 	st := &fakeStore{u: &User{ID: "11111111-1111-1111-1111-111111111111", Username: "sherlock", Email: "s@example.com", Trophies: 7}}
-	h := NewHandler(st, bal, func(context.Context) string { return st.u.ID })
-	return h, st, bal
+	imgs := &fakeImages{objects: map[string][]byte{}}
+	h := NewHandler(st, bal, func(context.Context) string { return st.u.ID }, WithImageStorage(imgs))
+	return h, st, bal, imgs
 }
 
 func TestProfileReturnsTrophiesAndRedisBalance(t *testing.T) {
@@ -177,60 +201,92 @@ func TestSetAvatarRejectsBadInput(t *testing.T) {
 	}
 }
 
-func TestCustomAvatarIsResizedStoredAndServed(t *testing.T) {
-	h, st, _ := newHandler(t)
+func TestCustomAvatarIsConvertedToWebPAndUploaded(t *testing.T) {
+	h, st, _, imgs := newHandlerWithImages(t)
 	rec := httptest.NewRecorder()
 	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(600, 300)))
-	if rec.Code != 200 || !st.u.HasAvatar || st.u.AvatarDefault != nil {
+	if rec.Code != 200 || st.u.AvatarURL == nil || st.u.AvatarDefault != nil {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-
-	img, err := jpeg.Decode(bytes.NewReader(st.image))
+	if !strings.HasPrefix(st.path, "avatars/"+st.u.ID+"_") || !strings.HasSuffix(st.path, ".webp") {
+		t.Fatalf("object path = %q", st.path)
+	}
+	img, err := webp.Decode(bytes.NewReader(imgs.objects[st.path]))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("stored object is not WebP: %v", err)
 	}
 	if b := img.Bounds(); b.Dx() != avatarSize || b.Dy() != avatarSize {
 		t.Fatalf("size = %v", b)
 	}
 
-	// The profile points at the avatar endpoint.
+	// The profile points at the public URL in the bucket.
 	prof := httptest.NewRecorder()
 	h.Profile(prof, httptest.NewRequest("GET", "/api/user/profile", nil))
 	var out struct {
 		Data profileResp `json:"data"`
 	}
 	_ = json.Unmarshal(prof.Body.Bytes(), &out)
-	if out.Data.Avatar.Type != "custom" || out.Data.Avatar.URL == nil ||
-		!strings.HasPrefix(*out.Data.Avatar.URL, avatarURLPrefix+st.u.ID+"?v=") {
+	if out.Data.Avatar.Type != "custom" || out.Data.Avatar.URL == nil || *out.Data.Avatar.URL != "https://cdn.test/"+st.path {
 		t.Fatalf("avatar = %+v", out.Data.Avatar)
 	}
 
-	// GET returns the JPEG bytes, public and cacheable.
-	get := func(id string, mod func(*http.Request)) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", avatarURLPrefix+id, nil)
-		req.SetPathValue("id", id)
-		if mod != nil {
-			mod(req)
-		}
-		r := httptest.NewRecorder()
-		h.Avatar(r, req)
-		return r
+	// Replacing it deletes the old object; choosing a default deletes the new one.
+	first := st.path
+	h.SetAvatar(httptest.NewRecorder(), multipartReq(t, nil, pngBytes(50, 50)))
+	if st.path == first || len(imgs.deleted) != 1 || imgs.deleted[0] != first {
+		t.Fatalf("replace: path %q, deleted %v", st.path, imgs.deleted)
 	}
-	r := get(st.u.ID, nil)
-	if r.Code != 200 || r.Header().Get("Content-Type") != "image/jpeg" || !bytes.Equal(r.Body.Bytes(), st.image) {
-		t.Fatalf("serve: %d %s", r.Code, r.Header())
+	second := st.path
+	h.SetAvatar(httptest.NewRecorder(), multipartReq(t, map[string]string{"avatar": "2"}, nil))
+	if st.u.AvatarURL != nil || len(imgs.objects) != 0 || imgs.deleted[1] != second {
+		t.Fatalf("default: url %v, objects %v, deleted %v", st.u.AvatarURL, imgs.objects, imgs.deleted)
 	}
-	if r := get(st.u.ID, func(q *http.Request) { q.Header.Set("If-Modified-Since", st.at.UTC().Format(http.TimeFormat)) }); r.Code != 304 {
-		t.Errorf("conditional get: %d", r.Code)
-	}
-	if r := get("not-a-uuid", nil); r.Code != 400 {
-		t.Errorf("bad id: %d", r.Code)
+}
+
+func TestCustomAvatarStorageFailures(t *testing.T) {
+	// Upload fails: nothing is saved.
+	h, st, _, imgs := newHandlerWithImages(t)
+	imgs.failWrite = errors.New("bucket down")
+	rec := httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
+	if rec.Code != http.StatusServiceUnavailable || st.u.AvatarURL != nil {
+		t.Fatalf("upload failure: %d url=%v", rec.Code, st.u.AvatarURL)
 	}
 
-	// Choosing a default afterwards drops the stored image.
-	h.SetAvatar(httptest.NewRecorder(), multipartReq(t, map[string]string{"avatar": "2"}, nil))
-	if r := get(st.u.ID, nil); r.Code != 404 {
-		t.Errorf("after default avatar: %d, want 404", r.Code)
+	// Upload works but the database write fails: the orphaned object is removed.
+	h, st, _, imgs = newHandlerWithImages(t)
+	st.failSet = errors.New("db down")
+	rec = httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
+	if rec.Code != http.StatusInternalServerError || len(imgs.objects) != 0 || len(imgs.deleted) != 1 {
+		t.Fatalf("db failure: %d objects=%d deleted=%v", rec.Code, len(imgs.objects), imgs.deleted)
+	}
+
+	// No storage configured: custom uploads are refused, defaults still work.
+	st = &fakeStore{u: &User{ID: "11111111-1111-1111-1111-111111111111"}}
+	h = NewHandler(st, &fakeBalances{}, func(context.Context) string { return st.u.ID })
+	rec = httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no storage: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	h.SetAvatar(rec, multipartReq(t, map[string]string{"avatar": "1"}, nil))
+	if rec.Code != 200 {
+		t.Fatalf("default without storage: %d", rec.Code)
+	}
+}
+
+func TestProcessAvatarAcceptsWebPAndJPEG(t *testing.T) {
+	var jpg bytes.Buffer
+	_ = jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 30, 20)), nil)
+	out, err := processAvatar(jpg.Bytes())
+	if err != nil || !storage.IsWebP(out) {
+		t.Fatalf("jpeg: %v", err)
+	}
+	// A WebP upload is re-encoded too.
+	if again, err := processAvatar(out); err != nil || !storage.IsWebP(again) {
+		t.Fatalf("webp: %v", err)
 	}
 }
 
@@ -241,47 +297,6 @@ func TestProcessAvatarRejectsHugeDimensions(t *testing.T) {
 	// Within the side limit but over the pixel budget (a small, compressible PNG).
 	if _, err := processAvatar(pngBytes(maxSourcePx, maxSourceArea/maxSourcePx+1)); err == nil {
 		t.Fatal("expected error for oversized area")
-	}
-}
-
-func TestConditionalAvatarRequestDoesNotReadTheImage(t *testing.T) {
-	h, st, _ := newHandler(t)
-	h.SetAvatar(httptest.NewRecorder(), multipartReq(t, nil, pngBytes(300, 200)))
-	get := func(mod func(*http.Request)) *httptest.ResponseRecorder {
-		req := httptest.NewRequest("GET", avatarURLPrefix+st.u.ID, nil)
-		req.SetPathValue("id", st.u.ID)
-		mod(req)
-		r := httptest.NewRecorder()
-		h.Avatar(r, req)
-		return r
-	}
-	first := get(func(*http.Request) {})
-	etag := first.Header().Get("ETag")
-	if first.Code != 200 || etag == "" || first.Header().Get("Cache-Control") != "public, max-age=300, must-revalidate" {
-		t.Fatalf("first: %d %v", first.Code, first.Header())
-	}
-	st.imageReads = 0
-	if r := get(func(q *http.Request) { q.Header.Set("If-None-Match", etag) }); r.Code != 304 || r.Body.Len() != 0 {
-		t.Fatalf("etag revalidation: %d", r.Code)
-	}
-	if r := get(func(q *http.Request) { q.Header.Set("If-Modified-Since", st.at.UTC().Format(http.TimeFormat)) }); r.Code != 304 {
-		t.Fatalf("ims revalidation: %d", r.Code)
-	}
-	if st.imageReads != 0 {
-		t.Fatalf("image bytes were read %d times for conditional requests", st.imageReads)
-	}
-	// A stale validator still gets the image.
-	if r := get(func(q *http.Request) { q.Header.Set("If-None-Match", `"old"`) }); r.Code != 200 {
-		t.Fatalf("stale etag: %d", r.Code)
-	}
-	// Only the current versioned URL is immutable.
-	v := get(func(q *http.Request) { q.URL.RawQuery = "v=" + strconv.FormatInt(st.at.Unix(), 10) })
-	if cc := v.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
-		t.Fatalf("versioned url cache-control = %q", cc)
-	}
-	old := get(func(q *http.Request) { q.URL.RawQuery = "v=1" })
-	if cc := old.Header().Get("Cache-Control"); strings.Contains(cc, "immutable") {
-		t.Fatalf("stale version must not be immutable: %q", cc)
 	}
 }
 
@@ -296,8 +311,8 @@ func TestAvatarUploadRateLimited(t *testing.T) {
 	WithUploadLimiter(denyUploads{})(h)
 	rec := httptest.NewRecorder()
 	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
-	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "90" || st.image != nil {
-		t.Fatalf("got %d retry-after=%q stored=%v", rec.Code, rec.Header().Get("Retry-After"), st.image != nil)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") != "90" || st.u.AvatarURL != nil {
+		t.Fatalf("got %d retry-after=%q stored=%v", rec.Code, rec.Header().Get("Retry-After"), st.u.AvatarURL != nil)
 	}
 	// Choosing a default avatar is not an upload and stays allowed.
 	rec = httptest.NewRecorder()

@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"backend/internal/storage"
 	"backend/pkg/utils"
+	"github.com/google/uuid"
 )
 
 const (
@@ -20,7 +22,8 @@ const (
 	multipartSlack   = 64 << 10 // room for multipart boundaries and the other fields
 	multipartMemory  = 2 << 20
 	defaultAvatarMax = 4 // default avatars are numbered 1..defaultAvatarMax
-	avatarURLPrefix  = "/api/user/avatars/"
+	avatarFolder     = "avatars/"
+	storageTimeout   = 10 * time.Second // cleanup of replaced images in the object store
 
 	maxConcurrentAvatars = 3 // image decodes at once; more get a 503 instead of exhausting memory
 )
@@ -35,6 +38,7 @@ type Handler struct {
 	balances Balancer
 	userID   func(context.Context) string // authenticated user from the request context (auth.UserID)
 	uploads  UploadLimiter                // nil = unlimited
+	images   storage.Provider             // object store for custom avatars; nil = custom uploads disabled
 	decoding chan struct{}                // bounds concurrent image decodes
 }
 
@@ -43,6 +47,9 @@ type Option func(*Handler)
 
 // WithUploadLimiter throttles custom avatar uploads per user.
 func WithUploadLimiter(l UploadLimiter) Option { return func(h *Handler) { h.uploads = l } }
+
+// WithImageStorage enables custom avatar uploads into p.
+func WithImageStorage(p storage.Provider) Option { return func(h *Handler) { h.images = p } }
 
 func NewHandler(store Store, balances Balancer, userID func(context.Context) string, opts ...Option) *Handler {
 	h := &Handler{store: store, balances: balances, userID: userID, decoding: make(chan struct{}, maxConcurrentAvatars)}
@@ -71,17 +78,10 @@ type avatarReq struct {
 	Avatar int `json:"avatar" validate:"required,min=1,max=4"`
 }
 
-// avatarURL points at GET /api/user/avatars/{id}; the version suffix busts
-// browser caches when the image is replaced.
-func avatarURL(userID string, updated time.Time) string {
-	return fmt.Sprintf("%s%s?v=%d", avatarURLPrefix, userID, updated.Unix())
-}
-
 func avatarOf(u *User) avatarInfo {
 	switch {
-	case u.HasAvatar && u.AvatarUpdatedAt != nil:
-		url := avatarURL(u.ID, *u.AvatarUpdatedAt)
-		return avatarInfo{Type: "custom", URL: &url}
+	case u.AvatarURL != nil:
+		return avatarInfo{Type: "custom", URL: u.AvatarURL}
 	case u.AvatarDefault != nil:
 		return avatarInfo{Type: "default", ID: u.AvatarDefault}
 	}
@@ -174,15 +174,21 @@ func (h *Handler) handleMultipart(w http.ResponseWriter, r *http.Request, uid st
 }
 
 func (h *Handler) saveDefault(w http.ResponseWriter, r *http.Request, uid string, n int) {
-	if err := h.store.SetAvatarDefault(r.Context(), uid, n); err != nil {
+	old, err := h.store.SetAvatarDefault(r.Context(), uid, n)
+	if err != nil {
 		h.avatarFailed(w, r, uid, err)
 		return
 	}
+	h.deleteImage(r.Context(), uid, old)
 	utils.LogInfoCtx(r.Context(), "default avatar set", "user_id", uid, "avatar", n)
 	utils.SuccessResponse(w, http.StatusOK, avatarInfo{Type: "default", ID: &n})
 }
 
 func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string, fh *multipart.FileHeader) {
+	if h.images == nil {
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "custom avatars are not available right now, pick a default one", nil)
+		return
+	}
 	if fh.Size > maxAvatarBytes {
 		utils.ErrorResponse(w, http.StatusRequestEntityTooLarge, "image must be at most 1 MB", nil)
 		return
@@ -230,11 +236,11 @@ func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string,
 		utils.ErrorResponse(w, http.StatusServiceUnavailable, "server busy, try again shortly", nil)
 		return
 	}
-	jpg, err := processAvatar(data)
+	img, err := processAvatar(data)
 	<-h.decoding
 	if errors.Is(err, errBadImage) {
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
-			map[string]string{"file": "must be a valid JPEG, PNG or GIF image"})
+			map[string]string{"file": "must be a valid JPEG, PNG, GIF or WebP image"})
 		return
 	}
 	if err != nil {
@@ -242,14 +248,38 @@ func (h *Handler) saveCustom(w http.ResponseWriter, r *http.Request, uid string,
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not save avatar", nil)
 		return
 	}
-	updated, err := h.store.SetAvatarCustom(r.Context(), uid, jpg)
+
+	// A fresh name per upload: the URL never changes content, so it can be cached forever.
+	path := fmt.Sprintf("%s%s_%s.webp", avatarFolder, uid, uuid.NewString())
+	url, err := h.images.UploadImage(r.Context(), path, img)
 	if err != nil {
+		utils.LogErrorCtx(r.Context(), "upload avatar failed", "user_id", uid, "path", path, "err", err)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "could not save avatar, try again", nil)
+		return
+	}
+	old, err := h.store.SetAvatarCustom(r.Context(), uid, url, path)
+	if err != nil {
+		h.deleteImage(r.Context(), uid, path) // not referenced by anyone
 		h.avatarFailed(w, r, uid, err)
 		return
 	}
-	url := avatarURL(uid, updated)
-	utils.LogInfoCtx(r.Context(), "custom avatar set", "user_id", uid, "bytes_in", len(data), "bytes_out", len(jpg))
+	h.deleteImage(r.Context(), uid, old)
+	utils.LogInfoCtx(r.Context(), "custom avatar set", "user_id", uid, "bytes_in", len(data), "bytes_out", len(img), "path", path)
 	utils.SuccessResponse(w, http.StatusOK, avatarInfo{Type: "custom", URL: &url})
+}
+
+// deleteImage removes a replaced avatar from the object store. It is best
+// effort: a failure only leaves an unreferenced file behind, so it is logged
+// and the request still succeeds. It runs even if the client has gone away.
+func (h *Handler) deleteImage(ctx context.Context, uid, path string) {
+	if path == "" || h.images == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storageTimeout)
+	defer cancel()
+	if err := h.images.Delete(ctx, path); err != nil {
+		utils.LogErrorCtx(ctx, "delete old avatar failed", "user_id", uid, "path", path, "err", err)
+	}
 }
 
 func (h *Handler) avatarFailed(w http.ResponseWriter, r *http.Request, uid string, err error) {
@@ -259,86 +289,4 @@ func (h *Handler) avatarFailed(w http.ResponseWriter, r *http.Request, uid strin
 	}
 	utils.LogErrorCtx(r.Context(), "save avatar failed", "user_id", uid, "err", err)
 	utils.ErrorResponse(w, http.StatusInternalServerError, "could not save avatar", nil)
-}
-
-type avatarIDReq struct {
-	ID string `json:"id" validate:"required,uuid"`
-}
-
-// Avatar handles GET /api/user/avatars/{id}: the stored custom image as JPEG.
-// It is public because <img> tags cannot send an Authorization header; the
-// image is already shown to other players. This is the one handler that
-// writes raw bytes instead of the JSON envelope; errors still use it.
-func (h *Handler) Avatar(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if errs := utils.Validate(avatarIDReq{ID: id}); errs != nil {
-		utils.ErrorResponse(w, http.StatusBadRequest, "invalid user id", errs)
-		return
-	}
-	// Look at updated_at first (no image bytes) so a conditional request can be
-	// answered with 304 without reading the BYTEA.
-	updated, err := h.store.AvatarUpdatedAt(r.Context(), id)
-	if errors.Is(err, ErrNotFound) {
-		utils.ErrorResponse(w, http.StatusNotFound, "avatar not found", nil)
-		return
-	}
-	if err != nil {
-		utils.LogErrorCtx(r.Context(), "load avatar failed", "user_id", id, "err", err)
-		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load avatar", nil)
-		return
-	}
-	etag := fmt.Sprintf(`"%x"`, updated.UnixNano())
-	h.avatarHeaders(w, r, etag, updated)
-	if notModified(r, etag, updated) {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	data, updated, err := h.store.GetAvatar(r.Context(), id)
-	if errors.Is(err, ErrNotFound) {
-		utils.ErrorResponse(w, http.StatusNotFound, "avatar not found", nil)
-		return
-	}
-	if err != nil {
-		utils.LogErrorCtx(r.Context(), "load avatar failed", "user_id", id, "err", err)
-		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load avatar", nil)
-		return
-	}
-	etag = fmt.Sprintf(`"%x"`, updated.UnixNano()) // the image may have changed since the lookup
-	h.avatarHeaders(w, r, etag, updated)
-	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
-}
-
-// avatarHeaders sets the validators and cache policy. Only a URL carrying the
-// current version (?v=<updated unix>, which avatarURL produces) is cached as
-// immutable; the bare URL is revalidated after five minutes, so a replaced or
-// removed avatar does not linger for a day.
-func (h *Handler) avatarHeaders(w http.ResponseWriter, r *http.Request, etag string, updated time.Time) {
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Last-Modified", updated.UTC().Format(http.TimeFormat))
-	if r.URL.Query().Get("v") == strconv.FormatInt(updated.Unix(), 10) {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		return
-	}
-	w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
-}
-
-// notModified implements the If-None-Match / If-Modified-Since check.
-func notModified(r *http.Request, etag string, updated time.Time) bool {
-	if inm := r.Header.Get("If-None-Match"); inm != "" {
-		for _, c := range strings.Split(inm, ",") {
-			if c = strings.TrimSpace(c); c == etag || c == "*" || c == "W/"+etag {
-				return true
-			}
-		}
-		return false
-	}
-	if ims := r.Header.Get("If-Modified-Since"); ims != "" {
-		if t, err := http.ParseTime(ims); err == nil && !updated.Truncate(time.Second).After(t) {
-			return true
-		}
-	}
-	return false
 }

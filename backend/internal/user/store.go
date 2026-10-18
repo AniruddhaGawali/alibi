@@ -21,15 +21,14 @@ var (
 )
 
 type User struct {
-	ID              string
-	Username        string
-	Email           string
-	PasswordHash    string
-	AvatarDefault   *int       // 1..4 when a default avatar is chosen
-	HasAvatar       bool       // true when a custom image is stored (the bytes are not loaded here)
-	AvatarUpdatedAt *time.Time // when the custom image was last set
-	Trophies        int
-	CreatedAt       time.Time
+	ID            string
+	Username      string
+	Email         string
+	PasswordHash  string
+	AvatarDefault *int    // 1..4 when a default avatar is chosen
+	AvatarURL     *string // public URL of the custom image in object storage
+	Trophies      int
+	CreatedAt     time.Time
 }
 
 // Store is the persistence the auth and profile handlers need.
@@ -40,18 +39,14 @@ type Store interface {
 	Availability(ctx context.Context, email, username string) (emailTaken, usernameTaken bool, err error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	GetByID(ctx context.Context, id string) (*User, error)
-	SetAvatarDefault(ctx context.Context, id string, n int) error
-	// SetAvatarCustom stores the processed JPEG and returns when it was saved.
-	SetAvatarCustom(ctx context.Context, id string, jpeg []byte) (time.Time, error)
-	// GetAvatar returns the custom image, or ErrNotFound if there is none.
-	GetAvatar(ctx context.Context, id string) ([]byte, time.Time, error)
-	// AvatarUpdatedAt returns when the custom image was last set without
-	// reading its bytes, or ErrNotFound if there is none.
-	AvatarUpdatedAt(ctx context.Context, id string) (time.Time, error)
+	// SetAvatarDefault picks default avatar n. It returns the object path of the
+	// custom image it replaced ("" if none) so the caller can delete it.
+	SetAvatarDefault(ctx context.Context, id string, n int) (oldPath string, err error)
+	// SetAvatarCustom points the user at an uploaded image (public URL and
+	// object path). It returns the object path of the image it replaced ("" if none).
+	SetAvatarCustom(ctx context.Context, id, url, path string) (oldPath string, err error)
 }
 
-// The users table is defined in backend/sql/*.sql. Profile reads select
-// "avatar_data IS NOT NULL" so the image bytes are never loaded with a user.
 // PGStore implements Store (and wallet.Store) on PostgreSQL. All SQL lives in
 // sql/queries and is compiled to type-safe Go by sqlc (internal/db/dbgen).
 type PGStore struct{ q *dbgen.Queries }
@@ -65,8 +60,7 @@ var ErrInsufficientTokens = errors.New("wallet: insufficient tokens")
 func fromRow(r dbgen.User) *User {
 	u := &User{
 		ID: r.ID, Username: r.Username, Email: r.Email, PasswordHash: r.PasswordHash,
-		HasAvatar: r.AvatarUpdatedAt != nil, AvatarUpdatedAt: r.AvatarUpdatedAt,
-		Trophies: int(r.Trophies), CreatedAt: r.CreatedAt,
+		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), CreatedAt: r.CreatedAt,
 	}
 	if r.AvatarDefault != nil {
 		n := int(*r.AvatarDefault)
@@ -121,44 +115,28 @@ func (s *PGStore) GetByID(ctx context.Context, id string) (*User, error) {
 	return fromRow(row), nil
 }
 
-func (s *PGStore) SetAvatarDefault(ctx context.Context, id string, n int) error {
+func (s *PGStore) SetAvatarDefault(ctx context.Context, id string, n int) (string, error) {
 	n16 := int16(n)
-	affected, err := s.q.SetDefaultAvatar(ctx, dbgen.SetDefaultAvatarParams{ID: id, AvatarDefault: &n16})
+	old, err := s.q.SetDefaultAvatar(ctx, dbgen.SetDefaultAvatarParams{ID: id, AvatarDefault: &n16})
 	if err != nil {
-		return err
+		return "", notFound(err)
 	}
-	if affected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return deref(old), nil
 }
 
-func (s *PGStore) SetAvatarCustom(ctx context.Context, id string, jpeg []byte) (time.Time, error) {
-	at, err := s.q.SetCustomAvatar(ctx, dbgen.SetCustomAvatarParams{ID: id, Data: jpeg})
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
-		return time.Time{}, ErrNotFound // no such user
-	}
+func (s *PGStore) SetAvatarCustom(ctx context.Context, id, url, path string) (string, error) {
+	old, err := s.q.SetCustomAvatar(ctx, dbgen.SetCustomAvatarParams{ID: id, AvatarUrl: url, AvatarPath: path})
 	if err != nil {
-		return time.Time{}, notFound(err)
+		return "", notFound(err)
 	}
-	return at, nil
+	return deref(old), nil
 }
 
-func (s *PGStore) GetAvatar(ctx context.Context, id string) ([]byte, time.Time, error) {
-	row, err := s.q.GetAvatar(ctx, id)
-	if err != nil {
-		return nil, time.Time{}, notFound(err)
+func deref(s *string) string {
+	if s == nil {
+		return ""
 	}
-	return row.Data, row.UpdatedAt, nil
-}
-
-func (s *PGStore) AvatarUpdatedAt(ctx context.Context, id string) (time.Time, error) {
-	at, err := s.q.GetAvatarUpdatedAt(ctx, id)
-	if err != nil {
-		return time.Time{}, notFound(err)
-	}
-	return at, nil
+	return *s
 }
 
 func (s *PGStore) GetTokenBalance(ctx context.Context, id string) (int64, error) {

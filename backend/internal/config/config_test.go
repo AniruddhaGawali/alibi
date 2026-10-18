@@ -66,3 +66,39 @@ func TestDefaultTrustedProxiesAreLoopbackOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvFilesSearchParentDirectories(t *testing.T) {
+	got := envFiles()
+	want := []string{".env", "../.env", "../../.env", "../../../.env", "../../../../.env"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestCheckSupabase(t *testing.T) {
+	ok := []Config{
+		{}, // not configured: uploads disabled, not an error
+		{SupabaseURL: "https://abc.supabase.co", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "http://localhost:54321", SupabaseServiceRoleKey: "k"},
+	}
+	for _, c := range ok {
+		if err := checkSupabase(&c); err != nil {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	bad := []Config{
+		{SupabaseURL: "https://abc.supabase.co"}, // key missing
+		{SupabaseURL: "abc.supabase.co", SupabaseServiceRoleKey: "k"},
+		{SupabaseURL: "ftp://abc", SupabaseServiceRoleKey: "k"},
+	}
+	for _, c := range bad {
+		if err := checkSupabase(&c); err == nil {
+			t.Errorf("%+v: want error", c)
+		}
+	}
+}

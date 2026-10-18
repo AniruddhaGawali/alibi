@@ -30,7 +30,14 @@ type Config struct {
 	WriteTimeout     time.Duration // 0 disables the deadline (streaming / slow LLM calls)
 	OTLPEndpoint     string        // host:port; a scheme or path in the env value is stripped
 	OllamaHost       string
+	CORSOrigins      []string // browser origins allowed to call the API
 	OpenRouterAPIKey string
+
+	// Image object storage (Supabase Storage). Optional: when SUPABASE_URL is
+	// empty, custom avatar uploads are disabled.
+	SupabaseURL            string
+	SupabaseServiceRoleKey string
+	SupabaseBucket         string
 
 	// Auth.
 	MigrateOnStart bool // run pending goose migrations when the API starts
@@ -71,6 +78,7 @@ var (
 	apiRequired    = []string{"POSTGRES_URI", "MONGO_URI", "REDIS_URI", "JWT_SECRET"}
 	workerRequired = []string{"REDIS_URI", "BREVO_SMTP_HOST", "BREVO_SMTP_USER", "BREVO_SMTP_PASS"}
 	redisRequired  = []string{"REDIS_URI"}
+	assetsRequired = []string{"SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"}
 )
 
 // defaultTrustedProxies is loopback only. Private ranges are deliberately not
@@ -91,18 +99,56 @@ func Load() (*Config, error) {
 	if len(cfg.JWTSecret) < minJWTSecretLen {
 		return nil, fmt.Errorf("JWT_SECRET must be at least %d characters", minJWTSecretLen)
 	}
+	if err := checkSupabase(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// LoadAssets returns the config for the asset upload tool, which needs only
+// the Supabase settings.
+func LoadAssets() (*Config, error) {
+	cfg, err := load(assetsRequired)
+	if err != nil {
+		return nil, err
+	}
+	return cfg, checkSupabase(cfg)
+}
+
+// checkSupabase validates the storage settings when they are present.
+func checkSupabase(cfg *Config) error {
+	if cfg.SupabaseURL == "" {
+		return nil
+	}
+	u, err := url.Parse(cfg.SupabaseURL)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return fmt.Errorf("SUPABASE_URL must be an http(s) URL such as https://<project>.supabase.co")
+	}
+	if cfg.SupabaseServiceRoleKey == "" {
+		return fmt.Errorf("SUPABASE_SERVICE_ROLE_KEY is required when SUPABASE_URL is set")
+	}
+	return nil
 }
 
 // LoadWorker returns the config for the email worker, which needs Redis and
 // Brevo but not Postgres, MongoDB or JWT.
 func LoadWorker() (*Config, error) { return load(workerRequired) }
 
+// envFiles lists where a .env may live: the working directory and its parents.
+// That covers `go run` from the repo root, backend/ and backend/cmd/<name>/.
+func envFiles() []string {
+	files := []string{".env"}
+	for prefix := "../"; len(files) < 5; prefix += "../" {
+		files = append(files, prefix+".env")
+	}
+	return files
+}
+
 // LoadRedisOnly returns the config for tools that only talk to Redis (emailctl).
 func LoadRedisOnly() (*Config, error) { return load(redisRequired) }
 
 func load(required []string) (*Config, error) {
-	if err := utils.LoadEnv(required, ".env", "../.env"); err != nil {
+	if err := utils.LoadEnv(required, envFiles()...); err != nil {
 		return nil, err
 	}
 	proxies, err := parseCIDRs(envStr("TRUSTED_PROXIES", defaultTrustedProxies))
@@ -123,7 +169,12 @@ func load(required []string) (*Config, error) {
 		WriteTimeout:     time.Duration(envInt("HTTP_WRITE_TIMEOUT_SECONDS", 120, 0, 86400)) * time.Second,
 		OTLPEndpoint:     otlpHostPort(envStr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4318")),
 		OllamaHost:       envStr("OLLAMA_HOST", "http://localhost:11434"),
+		CORSOrigins:      parseOrigins(envStr("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		OpenRouterAPIKey: os.Getenv("OPENROUTER_API_KEY"),
+
+		SupabaseURL:            strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
+		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
+		SupabaseBucket:         envStr("SUPABASE_BUCKET_NAME", "alibi-assets"),
 
 		MigrateOnStart: envBool("MIGRATE_ON_START", true),
 		JWTSecret:      os.Getenv("JWT_SECRET"),
@@ -216,4 +267,15 @@ func envInt(key string, def, min, max int) int {
 		return def
 	}
 	return v
+}
+
+// parseOrigins splits a comma-separated origin list, dropping blanks and trailing slashes.
+func parseOrigins(list string) []string {
+	var out []string
+	for _, o := range strings.Split(list, ",") {
+		if o = strings.TrimRight(strings.TrimSpace(o), "/"); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
 }

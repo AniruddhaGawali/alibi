@@ -1,21 +1,70 @@
 import { createApi } from './createApi'
 
-export interface DashboardData {
-  tokenBalance: number
-  trophies: number
-  activeCaseId: string | null
+export type Difficulty = 'easy' | 'medium' | 'hard'
+
+export interface Story {
+  id: string
+  title: string
+  synopsis: string
+  thumbnail_url: string
+  difficulty_level: Difficulty
+  reward_trophies: number
+  reward_tokens: number
 }
 
-// Placeholder endpoints: implemented on the backend in Phase 2.
+export interface DashboardStats {
+  trophies: number
+  tokens: number
+  cases_solved: number
+  /** Title of the case in progress, or null when the user is free to pick one. */
+  active_case_title: string | null
+}
+
+/** Both fields are null when the user is free to pick a new case. */
+export interface ActiveCase {
+  case_id: string | null
+  story_title: string | null
+}
+
+export interface LeaderboardEntry {
+  rank: number
+  user_id: string
+  username: string
+  trophies: number
+}
+
+/** The live panels refetch every 5 minutes (React Query pauses this while the tab is hidden). */
+export const STATS_POLL_MS = 5 * 60 * 1000
+export const LEADERBOARD_POLL_MS = 5 * 60 * 1000
+
 export const dashboardApi = createApi({
   name: 'dashboard',
   endpoints: (build) => ({
-    getDashboard: build.query<DashboardData>({
-      query: () => '/api/dashboard',
-      providesTags: ['Dashboard'],
-      staleTime: 15,
+    getStories: build.query<Story[]>({
+      query: () => '/api/dashboard/stories',
+      providesTags: ['Stories'],
+      staleTime: 60,
+    }),
+    getStats: build.query<DashboardStats>({
+      query: () => '/api/dashboard/stats',
+      providesTags: ['Stats'],
+      staleTime: 0,
+    }),
+    getActiveCase: build.query<ActiveCase>({
+      query: () => '/api/dashboard/active-case',
+      providesTags: ['Stats'],
+      staleTime: 0,
+    }),
+    getLeaderboard: build.query<LeaderboardEntry[]>({
+      query: () => '/api/dashboard/leaderboard',
+      providesTags: ['Leaderboard'],
+      staleTime: 0,
     }),
   }),
 })
 
-export const { useGetDashboardQuery } = dashboardApi
+export const {
+  useGetStoriesQuery, useGetStatsQuery,
+  useGetActiveCaseQuery,
+  useGetLeaderboardQuery,
+} = dashboardApi

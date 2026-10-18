@@ -24,6 +24,7 @@ export type Tag = string | { type: string; id?: string | number }
 export interface RequestDef {
   url: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
+  /** A plain object is sent as JSON; a FormData is sent as multipart. */
   body?: unknown
 }
 
@@ -84,7 +85,8 @@ const toRequest = (r: RequestDef | string): RequestDef => (typeof r === 'string'
 
 const run = <R>(req: RequestDef | string) => {
   const { url, method = 'GET', body } = toRequest(req)
-  return apiClient<R>(url, { method, body: body === undefined ? undefined : JSON.stringify(body) })
+  const payload = body === undefined ? undefined : body instanceof FormData ? body : JSON.stringify(body)
+  return apiClient<R>(url, { method, body: payload })
 }
 
 const norm = (t: Tag) => (typeof t === 'string' ? { type: t, id: undefined } : t)

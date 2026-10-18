@@ -42,7 +42,9 @@ type Service struct {
 	rdb   *redis.Client
 }
 
-func New(store Store, rdb *redis.Client) *Service { return &Service{store: store, rdb: rdb} }
+func New(store Store, rdb *redis.Client) *Service {
+	return &Service{store: store, rdb: rdb}
+}
 
 // Balance returns the balance from Redis, falling back to Postgres (and
 // refilling the cache) on a miss or when Redis is unavailable.

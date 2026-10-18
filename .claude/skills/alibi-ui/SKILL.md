@@ -19,6 +19,14 @@ cd frontend && npx shadcn@latest add <component> -y
 
 Never edit files in `src/components/ui/`. They are generated and a re-run of the CLI would overwrite changes. Change appearance through the theme (section 2) or by passing `className` at the call site. Import with the `@/` alias, e.g. `@/components/ui/button`.
 
+## 1b. Icons: Remix Icon only
+
+Every icon in the frontend comes from `@remixicon/react` (`import { RiTrophyLine } from '@remixicon/react'`). Do not use `lucide-react`, inline SVGs or emoji as icons, and do not add another icon package.
+
+- Component names are `Ri` + PascalCase name + `Line` (outline, the default here) or `Fill`, e.g. `RiCoinsLine`, `RiCloseLine`. Find a name on remixicon.com, and check it exists in the package before using it.
+- Size with Tailwind (`className="size-4"`), colour with a token (`text-gold`), and add `aria-hidden` when the icon sits next to text.
+- `components.json` has `"iconLibrary": "remixicon"`, so `npx shadcn@latest add <component>` generates shadcn components that already import Remix icons. If a generated file imports anything else, fix the import by re-adding it with `--overwrite` rather than hand-editing.
+
 ## 2. The theme lives in `src/index.css`
 
 Golden-sunset, dark-only, game-like (think Hogwarts Legacy menus). Change it by editing CSS variables and the rules at the bottom of `src/index.css`, not component files.
@@ -30,6 +38,8 @@ Golden-sunset, dark-only, game-like (think Hogwarts Legacy menus). Change it by 
 - **Button shine** on hover applies to primary, secondary, outline and destructive buttons only, not ghost, link or disabled.
 
 If a new component needs the look, extend the `[data-slot='...']` selectors in `index.css`.
+
+**Game props** (`src/components/game/`, styles at the bottom of `index.css`): `Tape`, `Stamp`, `Redacted`, `Typewriter` (with the `font-typewriter` Courier Prime utility) and `RedString`; add `className="frame"` to important panels for the gold corner frame (`frame-vintage` is the rococo version for hero panels, `GildedFrame` (components/game/) the carved wavy rococo frame for big pictures, drawn as SVG at the size of its box and overhanging it by ~30px so give it margin; `frame-portrait` the plain gilt moulding for the chat suspect image). `case-folder` + `case-sheet` + `PaperClip` make the aged paper case file. The cursor is a magnifier and buttons show a fingerprint on hover. Keep the golden-sunset palette; don't restyle these.
 
 ## 2b. Structure, providers and dependencies
 

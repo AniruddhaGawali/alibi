@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 130">
+<defs>
+<radialGradient id="g" cx="50%" cy="52%" r="50%"><stop offset="0.5" stop-color="#fff"/><stop offset="1" stop-color="#000"/></radialGradient>
+<mask id="m"><rect width="100" height="130" fill="url(#g)"/></mask>
+<filter id="f" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+<feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="2" seed="13" result="warp"/>
+<feDisplacementMap in="SourceGraphic" in2="warp" scale="16" result="ridges"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.11" numOctaves="3" seed="53" result="grain"/>
+<feColorMatrix in="grain" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  4 0 0 0 -1.35" result="holes"/>
+<feComposite in="ridges" in2="holes" operator="in"/>
+</filter>
+</defs>
+<g transform="rotate(-40 50 65)" mask="url(#m)"><g fill="none" stroke="#000" stroke-width="1.7" filter="url(#f)">
+<ellipse cx="49.9" cy="65.8" rx="2.5" ry="3.4"/><ellipse cx="50.1" cy="65.7" rx="5.7" ry="7.4"/><ellipse cx="49.7" cy="65.5" rx="8.9" ry="11.7"/><ellipse cx="49.5" cy="65.3" rx="11.7" ry="15.4"/><ellipse cx="50.4" cy="65.2" rx="14.4" ry="19.0"/><ellipse cx="50.1" cy="65.0" rx="17.2" ry="22.6"/><ellipse cx="49.5" cy="64.8" rx="19.9" ry="26.3"/><ellipse cx="50.9" cy="64.7" rx="22.9" ry="30.1"/><ellipse cx="48.5" cy="64.5" rx="25.9" ry="34.2"/><ellipse cx="48.8" cy="64.3" rx="28.7" ry="37.9"/><ellipse cx="51.2" cy="64.1" rx="32.0" ry="42.1"/><ellipse cx="51.3" cy="63.9" rx="35.2" ry="46.3"/><ellipse cx="52.0" cy="63.7" rx="38.3" ry="50.5"/><ellipse cx="48.8" cy="63.6" rx="41.5" ry="54.6"/><ellipse cx="49.9" cy="63.4" rx="44.7" ry="58.9"/><ellipse cx="50.4" cy="63.2" rx="47.8" ry="63.0"/><ellipse cx="49.2" cy="63.0" rx="50.8" ry="66.9"/>
+</g></g></svg>

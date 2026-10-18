@@ -7,70 +7,37 @@ package dbgen
 
 import (
 	"context"
-	"time"
 )
-
-const getAvatar = `-- name: GetAvatar :one
-SELECT data, updated_at FROM user_avatars WHERE user_id = $1
-`
-
-type GetAvatarRow struct {
-	Data      []byte
-	UpdatedAt time.Time
-}
-
-func (q *Queries) GetAvatar(ctx context.Context, id string) (GetAvatarRow, error) {
-	row := q.db.QueryRow(ctx, getAvatar, id)
-	var i GetAvatarRow
-	err := row.Scan(&i.Data, &i.UpdatedAt)
-	return i, err
-}
-
-const getAvatarUpdatedAt = `-- name: GetAvatarUpdatedAt :one
-SELECT updated_at FROM user_avatars WHERE user_id = $1
-`
-
-// Cheap revalidation lookup: no image bytes are read.
-func (q *Queries) GetAvatarUpdatedAt(ctx context.Context, id string) (time.Time, error) {
-	row := q.db.QueryRow(ctx, getAvatarUpdatedAt, id)
-	var updated_at time.Time
-	err := row.Scan(&updated_at)
-	return updated_at, err
-}
 
 const setCustomAvatar = `-- name: SetCustomAvatar :one
-WITH saved AS (
-    INSERT INTO user_avatars (user_id, data, updated_at)
-    VALUES ($1, $2, now())
-    ON CONFLICT (user_id) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at
-    RETURNING updated_at
-)
-UPDATE users
-SET avatar_default = NULL, avatar_updated_at = (SELECT updated_at FROM saved)
-WHERE id = $1
-RETURNING avatar_updated_at::timestamptz AS updated_at
+UPDATE users u
+SET avatar_default = NULL, avatar_url = $1::text, avatar_path = $2::text
+FROM (SELECT p.id, p.avatar_path FROM users p WHERE p.id = $3 FOR UPDATE) old
+WHERE u.id = old.id
+RETURNING old.avatar_path AS old_path
 `
 
 type SetCustomAvatarParams struct {
-	ID   string
-	Data []byte
+	AvatarUrl  string
+	AvatarPath string
+	ID         string
 }
 
-// Stores the image and marks the user as having a custom avatar in one statement.
-func (q *Queries) SetCustomAvatar(ctx context.Context, arg SetCustomAvatarParams) (time.Time, error) {
-	row := q.db.QueryRow(ctx, setCustomAvatar, arg.ID, arg.Data)
-	var updated_at time.Time
-	err := row.Scan(&updated_at)
-	return updated_at, err
+// Points the user at an uploaded image. Returns the previous custom image's
+// object path (NULL if there was none) so it can be deleted from storage.
+func (q *Queries) SetCustomAvatar(ctx context.Context, arg SetCustomAvatarParams) (*string, error) {
+	row := q.db.QueryRow(ctx, setCustomAvatar, arg.AvatarUrl, arg.AvatarPath, arg.ID)
+	var old_path *string
+	err := row.Scan(&old_path)
+	return old_path, err
 }
 
-const setDefaultAvatar = `-- name: SetDefaultAvatar :execrows
-WITH removed AS (
-    DELETE FROM user_avatars WHERE user_id = $2
-)
-UPDATE users
-SET avatar_default = $1, avatar_updated_at = NULL
-WHERE id = $2
+const setDefaultAvatar = `-- name: SetDefaultAvatar :one
+UPDATE users u
+SET avatar_default = $1, avatar_url = NULL, avatar_path = NULL
+FROM (SELECT p.id, p.avatar_path FROM users p WHERE p.id = $2 FOR UPDATE) old
+WHERE u.id = old.id
+RETURNING old.avatar_path AS old_path
 `
 
 type SetDefaultAvatarParams struct {
@@ -78,11 +45,11 @@ type SetDefaultAvatarParams struct {
 	ID            string
 }
 
-// Choosing a default avatar drops any stored custom image.
-func (q *Queries) SetDefaultAvatar(ctx context.Context, arg SetDefaultAvatarParams) (int64, error) {
-	result, err := q.db.Exec(ctx, setDefaultAvatar, arg.AvatarDefault, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+// Choosing a default avatar clears any custom image. Returns the old custom
+// image's object path (NULL if there was none) so it can be deleted from storage.
+func (q *Queries) SetDefaultAvatar(ctx context.Context, arg SetDefaultAvatarParams) (*string, error) {
+	row := q.db.QueryRow(ctx, setDefaultAvatar, arg.AvatarDefault, arg.ID)
+	var old_path *string
+	err := row.Scan(&old_path)
+	return old_path, err
 }

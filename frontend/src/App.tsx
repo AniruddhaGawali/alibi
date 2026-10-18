@@ -1,5 +1,6 @@
 import { ThemeProvider } from 'next-themes'
 import { RouterProvider } from 'react-router'
+import SoundEffects from './components/game/SoundEffects'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { router } from './routes/router'
@@ -11,6 +12,7 @@ export default function App() {
       <TooltipProvider>
         <RouterProvider router={router} />
         <Toaster />
+        <SoundEffects />
       </TooltipProvider>
     </ThemeProvider>
   )

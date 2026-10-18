@@ -34,7 +34,9 @@
 - [x] Dual-layer OTP rate limiting in Redis (429 + `Retry-After`): per email a 60 s cooldown and 5 codes/day; per client IP 10 codes per 15 min (so shared networks still work); wrong-code attempt cap; trusted-proxy aware client IP.
 - [x] Auth abuse hardening (PR #2 review): atomic wrong-OTP cap and HMAC-only code storage, per-IP budget before DB/bcrypt work, login lockout with exponential backoff + bcrypt concurrency bound, IPv6 /64 keys, loopback-only default `TRUSTED_PROXIES`, avatar decode/upload limits and conditional avatar GETs, migration advisory lock, BIGINT token balance, least-privilege compose env + healthchecks. See `backend/README.md`.
 - [ ] Bot protection (Cloudflare Turnstile / hCaptcha) on signup and resend-otp (needs a frontend widget and a secret key).
-- [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized/compressed, stored as `bytea`; `GET /api/user/avatars/{id}`).
+- [x] User profile (`GET /api/user/profile`) and avatar (`POST /api/user/avatar`: default preset 1-4 or custom image, max 1 MB, resized to 256x256 WebP and uploaded to object storage; the profile returns its public URL).
+- [x] Image storage behind `storage.Provider` (`internal/storage`), Supabase Storage for now (swappable for S3/GCS), WebP only; `make assets-upload` for manual case/avatar art until the admin panel exists.
+- [x] Supabase project + public bucket `alibi-assets` set up, `SUPABASE_*` in `.env`, `VITE_ASSET_BASE_URL` in `frontend/.env.local`; case and avatar art uploaded with `make assets-upload`, local copies removed from `frontend/public`.
 - [x] Token balance: Postgres is the source of truth, Redis `user:coins:<id>` is the cache (`wallet` service).
 - [x] Database workflow: goose migrations + sqlc type-safe queries (`backend/sql`).
 
@@ -49,48 +51,51 @@
 - [ ] Create the actual alert on `dlq_depth > 0` in the log/ClickHouse tooling, and set the real Brevo credentials and verified sender in production.
 
 ### P1.2 Auth Frontend (React)
-- [ ] Build the Signup form (Email/Username/Password) and direct Google Login button.
-- [ ] Build the OTP verification screen.
-- [ ] Build the Login screen for returning users.
-- [ ] Build the Avatar Selection UI for the onboarding flow.
+- [x] Build the Signup form (Email/Username/Password) and a Google Login button (placeholder; backend Google login is still open).
+- [x] Build the OTP verification screen (shadcn `InputOTP`, resend code).
+- [x] Build the Login screen for returning users.
+- [x] Build the Avatar Selection UI for the onboarding flow (1 MB client-side check, 4 placeholder defaults).
 
 ### P1.3 Auth Integration
-- [ ] Connect frontend auth forms to the Go backend.
-- [ ] Handle routing post-login (redirect to Dashboard).
+- [x] Connect frontend auth forms to the Go backend (`src/api/auth.ts`, `user.ts`; tokens, `pending_otp_email` and `user_data` in cookies). Not yet exercised against a running backend.
+- [x] Handle routing post-login (redirect to Dashboard).
 - [x] Implement logic to automatically allocate the initial 10 question tokens to the user's wallet upon completing onboarding. (Backend: allocated when the OTP is verified; frontend just displays it.)
-- [ ] Connect the frontend logout button to the backend Redis Blacklist endpoint.
+- [x] Connect the frontend logout button to the backend Redis Blacklist endpoint.
 
 ---
 
 ## Phase 2: The Home Page & Case Selection (P2)
 
 ### P2.1 Dashboard Backend (Go)
-- [ ] Create API endpoint to fetch available crime stories from PostgreSQL.
-- [ ] Create API endpoint to fetch the user's current token balance and total trophies.
-- [ ] Create API endpoint to fetch the top players from the Redis Leaderboard (ZSET).
-- [ ] Implement "Active Case Lock" logic to verify if a user is currently locked into an unfinished case.
+- [x] Create API endpoint to fetch available crime stories from PostgreSQL.
+- [x] Create API endpoint to fetch the user's current token balance and total trophies.
+- [x] Create API endpoint to fetch the top players from the Redis Leaderboard (ZSET).
+- [x] Implement "Active Case Lock" logic to verify if a user is currently locked into an unfinished case.
 
 ### P2.2 Dashboard Frontend (React)
-- [ ] Build Crime Story Cards displaying synopsis, title, difficulty, and rewards.
-- [ ] Build the live Token Balance and Trophies display component.
-- [ ] Build the Global Leaderboard component.
+- [x] Build Crime Story Cards displaying synopsis, title, difficulty, and rewards.
+- [x] Build the live Token Balance and Trophies display component.
+- [x] Build the Global Leaderboard component.
 
 ### P2.3 Case Selection Integration
-- [ ] Connect the dashboard UI to fetch live data from the backend using React Query.
-- [ ] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active).
+- [x] Connect the dashboard UI to fetch live data from the backend using React Query.
+- [x] Implement frontend routing restrictions based on the "Active Case Lock" (preventing users from clicking new stories if one is active). Cards use `GET /api/dashboard/active-case`: the active one shows In progress, the rest Locked.
 
 ---
 
 ## Phase 3: The Story and Briefing Page (P3)
 
 ### P3.1 Briefing Backend (Go)
-- [ ] Create API endpoint to fetch the specific active case's main plot and scene images.
-- [ ] Create API endpoint to fetch all suspect avatars and their initial testimonies for the active case.
+- [x] Create API endpoint to fetch the specific active case's main plot and scene images. (`GET /api/cases/{id}/briefing`; case = a `stories` row with `main_plot` and `case_scenes`.)
+- [x] Create API endpoint to fetch all suspect avatars and their initial testimonies for the active case. (`GET /api/cases/{id}/suspects`; `is_culprit` is never selected.)
+- [x] Start a case: `POST /api/cases/{id}/start` takes the Active Case Lock (400 "Finish your active case first" if locked into another case; idempotent for the same case). The dashboard Start / Continue buttons still need wiring to it in P3.2.
+- [x] Case #01 seeded (plot, 3 scenes, 4 suspects, Beatrice as culprit) in `backend/sql/seed/dev_seed.sql`; testimonies are drafts to review.
 
 ### P3.2 Briefing Frontend (React)
-- [ ] Build the Story Dashboard UI to render the main plot and visuals.
-- [ ] Build interactive Suspect Avatar components that display initial testimonies in a tooltip on hover.
-- [ ] Build the detailed Testimony Modal/View that opens on click, containing the "Chat" button.
+- [x] Build the Story Dashboard UI to render the main plot and visuals. (`/case/:id`: typewriter title, scene gallery beside a plot box of the same height that scrolls inside.)
+- [~] Suspect cards in a horizontal carousel show avatar, name, role and the initial testimony on the card itself (instead of a hover tooltip).
+- [x] Chat button on each suspect card opens the floating chat window (Zustand `useChatStore`) with that suspect pre-selected; the window shows the suspect's details and a placeholder where messages go in P3.3.
+- [ ] Suspect corkboard: suspect photos pinned on a board with red string linking them (reuse `components/game/RedString`).
 
 ### P3.3 Chat History UI (React)
 - [ ] Build the global chat history section on the main story dashboard.
@@ -121,6 +126,7 @@
 - [ ] Connect the chat UI to the LLM backend via standard HTTP or WebSockets/SSE for fast delivery.
 - [ ] Integrate the visual token counter to update instantly when a message is sent (using Zustand/React Query for optimistic updates).
 - [ ] Add state logic to disable and visually block the chat input when the token balance hits zero.
+- [ ] Show testimonies and chat logs in the typewriter font (`font-typewriter`, `Typewriter` reveal).
 
 ---
 
@@ -137,7 +143,19 @@
 - [ ] Build the final Accusation UI displaying all suspect avatars for selection.
 - [ ] Build the "Submit Deduction" confirmation flow.
 - [ ] Build the Case Outcome reveal screen (Win/Loss animations, updated trophies/tokens display).
+- [ ] Stamp the outcome onto the case file with the existing `Stamp` component ("SOLVED" / "GUILTY" / "WRONG").
 
 ### P5.3 Admin Panel (Go & React)
 - [ ] **Backend:** Create secured Admin APIs to update global configurations (daily token limits, specific refresh times).
+- [ ] **Backend:** Admin image upload API for case art (thumbnails, scenes, suspects) through `storage.Provider`, replacing `make assets-upload`.
 - [ ] **Frontend:** Build a simple Admin UI dashboard to adjust these settings.
+
+---
+
+## Game UI Polish (cross-phase)
+
+- [x] Magnifying-glass cursor, fingerprint mark on button hover, gold `frame` on key panels, film grain and vignette.
+- [x] Case-file props in `components/game/`: `Tape`, `Stamp`, `Redacted`, `Typewriter`, `RedString`; applied to the dashboard story cards (redacted + CLASSIFIED stamp on locked cases).
+- [x] Sound effects (button click, paper rustle on opening a case, typewriter keys, stamp) with a mute toggle. Synthesised with Web Audio, no files. See `docs/ui_todo.md`.
+- [ ] Rank titles (Rookie, Detective, Inspector, Chief) shown on the leaderboard and avatar.
+- [ ] Loading screen ("Searching the archives...") and page transitions.
