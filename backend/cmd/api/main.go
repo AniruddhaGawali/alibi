@@ -146,6 +146,7 @@ func run() error {
 
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL)
 	blacklist := auth.NewBlacklist(rdb)
+	blacklist.SetFailOpen(cfg.AuthFailOpen)
 	walletSvc := wallet.New(userStore, rdb)
 	authH := auth.NewHandler(auth.Deps{
 		Users:     userStore,
@@ -157,7 +158,7 @@ func run() error {
 			IPMax: cfg.OTPIPMax, IPWindow: cfg.OTPIPWindow,
 			AuthIPMax: cfg.AuthIPMax, AuthIPWindow: cfg.AuthIPWindow, SignupIPDailyMax: cfg.SignupIPDailyMax,
 			LoginMaxFailures: cfg.LoginMaxFailures,
-		}),
+		}).WithFallback(cfg.AuthFailOpen), // login and refresh keep working, with in-memory limits, if Redis is down
 		Mail:           queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen)), // the email worker consumes it
 		Coins:          walletSvc,
 		TrustedProxies: cfg.TrustedProxies,

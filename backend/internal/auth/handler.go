@@ -198,7 +198,7 @@ func (h *Handler) takeCooldown(w http.ResponseWriter, r *http.Request, email, ip
 	wait, err := h.Limiter.Take(r.Context(), email, ip)
 	if err != nil {
 		utils.LogErrorCtx(r.Context(), "otp rate limit check failed", "err", err)
-		utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "Sign-up is temporarily unavailable. Please try again in a few minutes.", nil)
 		return false
 	}
 	if wait > 0 {
@@ -570,8 +570,12 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.Blacklist.RevokeAll(r.Context(), h.Tokens.now(), claims, rc); err != nil {
 		utils.LogErrorCtx(r.Context(), "blacklist tokens failed", "user_id", claims.Subject, "err", err)
-		utils.ErrorResponse(w, http.StatusInternalServerError, "could not log out", nil)
-		return
+		if !h.Blacklist.FailOpen() {
+			utils.ErrorResponse(w, http.StatusInternalServerError, "could not log out", nil)
+			return
+		}
+		// Redis is down, but the tokens are revoked in this process's memory and the client
+		// drops them: the player is logged out here, so say so.
 	}
 	utils.LogInfoCtx(r.Context(), "user logged out", "user_id", claims.Subject)
 	utils.SuccessResponse(w, http.StatusOK, map[string]string{"message": "logged out"})

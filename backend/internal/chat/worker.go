@@ -59,17 +59,26 @@ func (w *Worker) Run(ctx context.Context, concurrency int) {
 }
 
 func (w *Worker) loop(ctx context.Context) {
+	failures := 0
 	for ctx.Err() == nil {
 		err := w.broker.Consume(ctx, Topic, w.Handle)
 		switch {
 		case err == nil, errors.Is(err, queue.ErrNoMessage), ctx.Err() != nil:
+			if failures > 0 && ctx.Err() == nil {
+				utils.LogInfo("chat storage worker: queue reachable again", "after_failures", failures)
+			}
+			failures = 0
 		default:
-			// A failed message (already re-queued or dead-lettered) or a Redis
-			// error. Pause so an unreachable Redis cannot spin the loop.
-			utils.LogError("chat storage worker: consume", "err", err)
+			// A failed message (already re-queued or dead-lettered) or a Redis error. Pause
+			// (longer the longer it lasts) so an unreachable Redis cannot spin the loop, and
+			// log the first failure and then only now and then, not once a second per consumer.
+			failures++
+			if failures == 1 || failures%30 == 0 {
+				utils.LogError("chat storage worker: consume", "err", err, "consecutive_failures", failures)
+			}
 			select {
 			case <-ctx.Done():
-			case <-time.After(time.Second):
+			case <-time.After(min(time.Second<<min(failures-1, 3), 8*time.Second)):
 			}
 		}
 	}

@@ -177,3 +177,41 @@ func TestForceRefreshBypass(t *testing.T) {
 		t.Fatalf("stored response not refreshed: %s calls=%d", rec.Body, calls)
 	}
 }
+
+// The client must never see a write's response before the cache has been invalidated.
+func TestInvalidationHappensBeforeTheResponseIsSent(t *testing.T) {
+	c, _ := setup(t)
+	calls := 0
+	get := c.Wrap(Policy{TTL: time.Minute, Tags: []string{"t"}}, func(w http.ResponseWriter, r *http.Request) { calls++; _, _ = w.Write([]byte("x")) })
+	post := c.Invalidates(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("done"))
+	}, "t")
+	call(get, "GET", "/g", "u")
+	w := &flushCheck{ResponseRecorder: httptest.NewRecorder(), onFirstWrite: func() {
+		// at the moment the client first receives anything, the next read must already miss
+		if rec := call(get, "GET", "/g", "u"); rec.Header().Get("X-Cache") != "MISS" {
+			t.Error("the write response was sent before the cache was invalidated")
+		}
+	}}
+	req := httptest.NewRequest("POST", "/g", nil)
+	req = req.WithContext(context.WithValue(req.Context(), ctxKey{}, "u"))
+	post.ServeHTTP(w, req)
+	if calls != 2 || w.Body.String() != "done" || w.Code != 200 {
+		t.Fatalf("calls=%d body=%q code=%d", calls, w.Body, w.Code)
+	}
+}
+
+type flushCheck struct {
+	*httptest.ResponseRecorder
+	onFirstWrite func()
+	done         bool
+}
+
+func (f *flushCheck) WriteHeader(code int) {
+	if !f.done {
+		f.done = true
+		f.onFirstWrite()
+	}
+	f.ResponseRecorder.WriteHeader(code)
+}

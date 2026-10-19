@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -111,9 +112,52 @@ func (m *TokenManager) Parse(token string, want TokenType) (*Claims, error) {
 
 // Blacklist records revoked token IDs in Redis. Entries expire together with
 // the token, so the set never grows past the tokens still in circulation.
-type Blacklist struct{ rdb *redis.Client }
+//
+// Every revocation is also kept in this process's memory until the token expires, so a
+// logged-out token stays refused on this instance even if Redis is down or was flushed.
+type Blacklist struct {
+	rdb      *redis.Client
+	failOpen bool
 
-func NewBlacklist(rdb *redis.Client) *Blacklist { return &Blacklist{rdb: rdb} }
+	mu     sync.Mutex
+	local  map[string]time.Time // jti -> when the token expires
+	pruned time.Time
+}
+
+func NewBlacklist(rdb *redis.Client) *Blacklist {
+	return &Blacklist{rdb: rdb, local: map[string]time.Time{}}
+}
+
+// SetFailOpen chooses what a request does when Redis cannot say whether its token was
+// revoked: true lets it through (logged), false refuses it with a 503. Open keeps the game
+// working through a Redis outage; the cost is that a token revoked on another instance (or
+// before a restart) is accepted until it expires, at most one access-token lifetime.
+func (b *Blacklist) SetFailOpen(open bool) { b.failOpen = open }
+
+// FailOpen reports the setting.
+func (b *Blacklist) FailOpen() bool { return b.failOpen }
+
+func (b *Blacklist) remember(jti string, ttl time.Duration) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	now := time.Now()
+	if len(b.local) > 1024 && now.Sub(b.pruned) > time.Minute { // drop the expired, so the map stays small
+		b.pruned = now
+		for k, exp := range b.local {
+			if now.After(exp) {
+				delete(b.local, k)
+			}
+		}
+	}
+	b.local[jti] = now.Add(ttl)
+}
+
+func (b *Blacklist) revokedHere(jti string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	exp, ok := b.local[jti]
+	return ok && time.Now().Before(exp)
+}
 
 func blacklistKey(jti string) string { return fmt.Sprintf(blacklistKeyFm, jti) }
 
@@ -122,6 +166,7 @@ func (b *Blacklist) Revoke(ctx context.Context, jti string, ttl time.Duration) e
 	if ttl <= 0 {
 		return nil
 	}
+	b.remember(jti, ttl)
 	return b.rdb.Set(ctx, blacklistKey(jti), "true", ttl).Err()
 }
 
@@ -131,6 +176,7 @@ func (b *Blacklist) RevokeAll(ctx context.Context, now time.Time, claims ...*Cla
 	pipe := b.rdb.TxPipeline()
 	for _, c := range claims {
 		if ttl := c.Remaining(now); ttl > 0 {
+			b.remember(c.ID, ttl)
 			pipe.Set(ctx, blacklistKey(c.ID), "true", ttl)
 		}
 	}
@@ -145,10 +191,25 @@ func (b *Blacklist) Claim(ctx context.Context, jti string, ttl time.Duration) (b
 	if ttl <= 0 {
 		return false, nil
 	}
-	return b.rdb.SetNX(ctx, blacklistKey(jti), "true", ttl).Result()
+	ok, err := b.rdb.SetNX(ctx, blacklistKey(jti), "true", ttl).Result()
+	if err != nil && b.failOpen {
+		// Redis is down: enforce "each refresh token works once" in this process's memory.
+		if b.revokedHere(jti) {
+			return false, nil
+		}
+		b.remember(jti, ttl)
+		return true, nil
+	}
+	if err == nil && ok {
+		b.remember(jti, ttl)
+	}
+	return ok, err
 }
 
 func (b *Blacklist) IsRevoked(ctx context.Context, jti string) (bool, error) {
+	if b.revokedHere(jti) {
+		return true, nil
+	}
 	n, err := b.rdb.Exists(ctx, blacklistKey(jti)).Result()
 	return n > 0, err
 }

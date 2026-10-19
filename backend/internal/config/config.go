@@ -73,6 +73,9 @@ type Config struct {
 	CacheStaticMaxAge time.Duration // how long browsers reuse case content without asking
 	CacheResultMaxAge time.Duration // how long browsers reuse a closed case's result (it never changes)
 
+	// AuthFailOpen keeps signed-in players working while Redis is down (see auth.Blacklist.SetFailOpen).
+	AuthFailOpen bool
+
 	// Auth.
 	MigrateOnStart bool // run pending goose migrations when the API starts
 	JWTSecret      string
@@ -264,6 +267,8 @@ func load(required []string) (*Config, error) {
 		CacheCatalogTTL:   time.Duration(envInt("CACHE_CATALOG_TTL_SECONDS", 3600, 1, 604800)) * time.Second,
 		CacheStaticMaxAge: time.Duration(envInt("CACHE_BROWSER_MAX_AGE_SECONDS", 3600, 0, 2592000)) * time.Second,
 		CacheResultMaxAge: time.Duration(envInt("CACHE_RESULT_MAX_AGE_SECONDS", 86400, 0, 2592000)) * time.Second,
+
+		AuthFailOpen: envBool("AUTH_FAIL_OPEN_WHEN_REDIS_DOWN", true),
 
 		MigrateOnStart: envBool("MIGRATE_ON_START", true),
 		JWTSecret:      os.Getenv("JWT_SECRET"),

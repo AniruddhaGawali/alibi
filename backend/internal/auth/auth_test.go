@@ -109,7 +109,8 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// same fail-fast settings as db.ConnectRedis, so Redis-down tests do not crawl
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), DialerRetries: 1, DialerRetryTimeout: 5 * time.Millisecond, MaxRetries: 1, MinRetryBackoff: time.Millisecond, MaxRetryBackoff: 5 * time.Millisecond})
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	_, private, _ := net.ParseCIDR("10.0.0.0/8")

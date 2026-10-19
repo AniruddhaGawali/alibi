@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"backend/internal/config"
 	"backend/pkg/utils"
@@ -67,6 +68,16 @@ func ConnectRedis(cfg *config.Config) (*redis.Client, error) {
 		return nil, fmt.Errorf("redis: invalid REDIS_URI: %w", err)
 	}
 	opts.PoolSize = cfg.RedisPoolSize
+	// Short timeouts and one retry: with Redis down, every call would otherwise wait for the
+	// library's defaults (5 s dial, 3 retries with backoff, 5 dial attempts) and a single request makes many.
+	opts.DialTimeout = 300 * time.Millisecond
+	opts.ReadTimeout = 2 * time.Second
+	opts.WriteTimeout = 2 * time.Second
+	opts.MaxRetries = 1
+	opts.DialerRetries = 1 // default 5 attempts: ~0.8 s per failing call while Redis is down
+	opts.DialerRetryTimeout = 20 * time.Millisecond
+	opts.MinRetryBackoff = 5 * time.Millisecond
+	opts.MaxRetryBackoff = 25 * time.Millisecond
 	client := redis.NewClient(opts)
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()

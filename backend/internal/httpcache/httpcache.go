@@ -275,16 +275,20 @@ func matches(header, etag string) bool {
 // Invalidates wraps a route that changes data: when it succeeds (status below 300),
 // every response cached under the given tags is dropped. Tags use the same
 // placeholders as a Policy.
+//
+// The handler's response is held back until the tags are bumped, so by the time a client
+// learns the write succeeded, its follow-up GET can no longer be answered from the old cache.
 func (c *Cache) Invalidates(h http.HandlerFunc, tags ...string) http.HandlerFunc {
 	if c.off {
 		return h
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		h(sw, r)
-		if sw.status < 300 {
+		rec := &recorder{header: http.Header{}, status: http.StatusOK}
+		h(rec, r)
+		if rec.status < 300 {
 			c.Bump(r.Context(), c.tags(tags, r, c.userID(r.Context()))...)
 		}
+		rec.replay(w)
 	}
 }
 
@@ -325,17 +329,6 @@ func (r *recorder) replay(w http.ResponseWriter) {
 	}
 	w.WriteHeader(r.status)
 	_, _ = w.Write(r.body.Bytes())
-}
-
-// statusWriter remembers the status code.
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusWriter) WriteHeader(code int) {
-	s.status = code
-	s.ResponseWriter.WriteHeader(code)
 }
 
 // headerWriter adds Cache-Control to 200 responses only.
