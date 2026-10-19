@@ -27,8 +27,10 @@ type Config struct {
 
 	// Server and integrations (all optional).
 	HTTPAddr         string
-	WriteTimeout     time.Duration // 0 disables the deadline (streaming / slow LLM calls)
-	OTLPEndpoint     string        // host:port; a scheme or path in the env value is stripped
+	WriteTimeout     time.Duration     // 0 disables the deadline (streaming / slow LLM calls)
+	OTLPEndpoint     string            // host:port; a scheme or path in the env value is stripped
+	OTLPSecure       bool              // TLS to the OTLP endpoint (hosted backends); off for the local collector
+	OTLPHeaders      map[string]string // headers on every OTLP export (auth, dataset)
 	OllamaHost       string
 	CORSOrigins      []string // browser origins allowed to call the API
 	OpenRouterAPIKey string
@@ -103,6 +105,10 @@ type Config struct {
 	BrevoSMTPPass string
 	EmailFrom     string // sender address; defaults to BREVO_SMTP_USER
 
+	// EmbedEmailWorker runs the email worker (and its queue monitor) inside the API
+	// process, for hosts that only allow one service. Needs the BREVO_* settings.
+	EmbedEmailWorker bool
+
 	// Email worker process.
 	WorkerConcurrency  int           // parallel consumers
 	WorkerHTTPAddr     string        // health endpoint of the worker
@@ -139,6 +145,13 @@ func Load() (*Config, error) {
 	}
 	if err := checkSupabase(cfg); err != nil {
 		return nil, err
+	}
+	if cfg.EmbedEmailWorker {
+		for _, key := range workerRequired {
+			if os.Getenv(key) == "" {
+				return nil, fmt.Errorf("missing required environment variable: %s (EMBED_EMAIL_WORKER is on)", key)
+			}
+		}
 	}
 	if err := checkGoogle(cfg); err != nil {
 		return nil, err
@@ -216,6 +229,7 @@ func load(required []string) (*Config, error) {
 	if err := utils.LoadEnv(required, envFiles()...); err != nil {
 		return nil, err
 	}
+	otlp := loadOTLP()
 	proxies, err := parseCIDRs(envStr("TRUSTED_PROXIES", defaultTrustedProxies))
 	if err != nil {
 		return nil, fmt.Errorf("TRUSTED_PROXIES: %w", err)
@@ -230,9 +244,11 @@ func load(required []string) (*Config, error) {
 		RedisPoolSize:  envInt("REDIS_POOL_SIZE", 10, 1, math.MaxInt32),
 		ConnectTimeout: time.Duration(envInt("DB_CONNECT_TIMEOUT_SECONDS", 5, 1, 3600)) * time.Second,
 
-		HTTPAddr:         envStr("HTTP_ADDR", ":8080"),
+		HTTPAddr:         httpAddr(),
 		WriteTimeout:     time.Duration(envInt("HTTP_WRITE_TIMEOUT_SECONDS", 120, 0, 86400)) * time.Second,
-		OTLPEndpoint:     otlpHostPort(envStr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4318")),
+		OTLPEndpoint:     otlp.endpoint,
+		OTLPSecure:       otlp.secure,
+		OTLPHeaders:      otlp.headers,
 		OllamaHost:       envStr("OLLAMA_HOST", "http://localhost:11434"),
 		CORSOrigins:      parseOrigins(envStr("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
 		OpenRouterAPIKey: apiKey(os.Getenv("OPENROUTER_API_KEY")),
@@ -294,10 +310,58 @@ func load(required []string) (*Config, error) {
 		BrevoSMTPPass: os.Getenv("BREVO_SMTP_PASS"),
 		EmailFrom:     envStr("EMAIL_FROM", os.Getenv("BREVO_SMTP_USER")),
 
+		EmbedEmailWorker:   envBool("EMBED_EMAIL_WORKER", false),
 		WorkerConcurrency:  envInt("WORKER_CONCURRENCY", 4, 1, 64),
 		WorkerHTTPAddr:     envStr("WORKER_HTTP_ADDR", ":8081"),
 		WorkerMonitorEvery: time.Duration(envInt("WORKER_MONITOR_SECONDS", 30, 1, 3600)) * time.Second,
 	}, nil
+}
+
+// httpAddr is HTTP_ADDR, else ":$PORT" (what Koyeb, Render and Fly inject), else ":8080".
+func httpAddr() string {
+	if v := os.Getenv("HTTP_ADDR"); v != "" {
+		return v
+	}
+	if p := strings.TrimSpace(os.Getenv("PORT")); p != "" {
+		return ":" + p
+	}
+	return ":8080"
+}
+
+type otlpSettings struct {
+	endpoint string
+	secure   bool
+	headers  map[string]string
+}
+
+// loadOTLP reads the telemetry target. Locally it is the plain-HTTP collector.
+// With AXIOM_API_TOKEN (and AXIOM_DATASET) set it exports to Axiom over TLS
+// (AXIOM_OTLP_ENDPOINT overrides api.axiom.co, e.g. for the EU region). Any
+// OTEL_EXPORTER_OTLP_ENDPOINT with an https:// scheme, or OTEL_EXPORTER_OTLP_TLS=true,
+// also turns TLS on. Extra headers: OTEL_EXPORTER_OTLP_HEADERS="k=v,k2=v2".
+func loadOTLP() otlpSettings {
+	raw := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	o := otlpSettings{
+		endpoint: otlpHostPort(envStr("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4318")),
+		secure:   strings.HasPrefix(raw, "https://") || envBool("OTEL_EXPORTER_OTLP_TLS", false),
+		headers:  map[string]string{},
+	}
+	for _, kv := range strings.Split(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"), ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.TrimSpace(k) != "" {
+			o.headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		}
+	}
+	if token := apiKey(os.Getenv("AXIOM_API_TOKEN")); token != "" {
+		if raw == "" {
+			o.endpoint = otlpHostPort(envStr("AXIOM_OTLP_ENDPOINT", "api.axiom.co"))
+		}
+		o.secure = true
+		o.headers["Authorization"] = "Bearer " + token
+		if ds := strings.TrimSpace(os.Getenv("AXIOM_DATASET")); ds != "" {
+			o.headers["X-Axiom-Dataset"] = ds
+		}
+	}
+	return o
 }
 
 // parseCIDRs parses a comma-separated CIDR list; "" and "none" give an empty list.

@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1
 #
 # One build, two deployable services (build with --target):
-#   api     the HTTP API
+#   api     the HTTP API (last stage, so it is the default for a plain build).
+#           Set EMBED_EMAIL_WORKER=true to also run the email worker in it.
 #   worker  the email worker (+ the emailctl admin tool)
+# Everything is configured through environment variables (see ../.env.example).
 
 FROM golang:1.27 AS build
 WORKDIR /src
@@ -19,12 +21,12 @@ RUN apk add --no-cache ca-certificates tzdata \
  && adduser -D -u 10001 app
 USER app
 
-FROM base AS api
-COPY --from=build /out/api /usr/local/bin/api
-EXPOSE 8080
-ENTRYPOINT ["api"]
-
 FROM base AS worker
 COPY --from=build /out/worker /out/emailctl /usr/local/bin/
 EXPOSE 8081
 ENTRYPOINT ["worker"]
+
+FROM base AS api
+COPY --from=build /out/api /usr/local/bin/api
+EXPOSE 8080
+ENTRYPOINT ["api"]

@@ -139,3 +139,38 @@ func TestAPIKeyIgnoresACommentThatBecameTheValue(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPAddrFollowsPORT(t *testing.T) {
+	t.Setenv("HTTP_ADDR", "")
+	t.Setenv("PORT", "9090")
+	if got := httpAddr(); got != ":9090" {
+		t.Fatalf("PORT: got %q", got)
+	}
+	t.Setenv("HTTP_ADDR", ":7000")
+	if got := httpAddr(); got != ":7000" {
+		t.Fatalf("HTTP_ADDR wins: got %q", got)
+	}
+	t.Setenv("HTTP_ADDR", "")
+	t.Setenv("PORT", "")
+	if got := httpAddr(); got != ":8080" {
+		t.Fatalf("default: got %q", got)
+	}
+}
+
+func TestLoadOTLPAxiom(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+	t.Setenv("AXIOM_API_TOKEN", "xaat-1")
+	t.Setenv("AXIOM_DATASET", "alibi-prod")
+	o := loadOTLP()
+	if o.endpoint != "api.axiom.co" || !o.secure ||
+		o.headers["Authorization"] != "Bearer xaat-1" || o.headers["X-Axiom-Dataset"] != "alibi-prod" {
+		t.Fatalf("unexpected axiom settings: %+v", o)
+	}
+
+	t.Setenv("AXIOM_API_TOKEN", "")
+	o = loadOTLP()
+	if o.endpoint != "localhost:4318" || o.secure || len(o.headers) != 0 {
+		t.Fatalf("local default changed: %+v", o)
+	}
+}

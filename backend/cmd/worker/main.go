@@ -34,7 +34,7 @@ func run() error {
 		return err
 	}
 
-	shutdownTelemetry, err := logger.Init(context.Background(), "alibi-email-worker", cfg.OTLPEndpoint)
+	shutdownTelemetry, err := logger.InitWith(context.Background(), "alibi-email-worker", logger.Options{Endpoint: cfg.OTLPEndpoint, Secure: cfg.OTLPSecure, Headers: cfg.OTLPHeaders})
 	if err != nil {
 		return err
 	}

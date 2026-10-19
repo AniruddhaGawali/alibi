@@ -53,7 +53,7 @@ func run() error {
 		return err
 	}
 
-	shutdownTelemetry, err := logger.Init(context.Background(), "alibi-api", cfg.OTLPEndpoint)
+	shutdownTelemetry, err := logger.InitWith(context.Background(), "alibi-api", logger.Options{Endpoint: cfg.OTLPEndpoint, Secure: cfg.OTLPSecure, Headers: cfg.OTLPHeaders})
 	if err != nil {
 		return err
 	}
@@ -148,6 +148,7 @@ func run() error {
 	blacklist := auth.NewBlacklist(rdb)
 	blacklist.SetFailOpen(cfg.AuthFailOpen)
 	walletSvc := wallet.New(userStore, rdb)
+	mailBroker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen))
 	authH := auth.NewHandler(auth.Deps{
 		Users:     userStore,
 		Tokens:    tokens,
@@ -231,9 +232,23 @@ func run() error {
 			Run(bgCtx, cfg.ChatWorkerConcurrency)
 	}()
 	go chat.Monitor(bgCtx, chatBroker, 30*time.Second)
+	// Single-service hosting: run the email worker here too (EMBED_EMAIL_WORKER=true).
+	// Otherwise run cmd/worker as its own service.
+	emailWorkerDone := make(chan struct{})
+	if cfg.EmbedEmailWorker {
+		mailer := utils.NewMailer(cfg.BrevoSMTPHost, cfg.BrevoSMTPPort, cfg.BrevoSMTPUser, cfg.BrevoSMTPPass, cfg.EmailFrom)
+		go func() {
+			defer close(emailWorkerDone)
+			email.NewWorker(mailBroker, mailer).Run(bgCtx, cfg.WorkerConcurrency)
+		}()
+		go email.Monitor(bgCtx, mailBroker, cfg.WorkerMonitorEvery)
+	} else {
+		close(emailWorkerDone)
+	}
 	defer func() {
 		stopBackground()
 		<-chatWorkerDone
+		<-emailWorkerDone
 	}()
 	resetCron, err := jobs.StartTokenReset(func(ctx context.Context) (jobs.Schedule, error) {
 		s := gameSettings.Current(ctx)

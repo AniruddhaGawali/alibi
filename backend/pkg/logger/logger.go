@@ -22,6 +22,30 @@ import (
 // endpoint is host:port of the OTLP/HTTP receiver (e.g. localhost:4318).
 // The returned function flushes and shuts down the exporters.
 func Init(ctx context.Context, serviceName, endpoint string) (func(context.Context) error, error) {
+	return InitWith(ctx, serviceName, Options{Endpoint: endpoint})
+}
+
+// Options configures InitWith. The zero value (plus an Endpoint) is the local
+// collector: plain HTTP, no extra headers.
+type Options struct {
+	Endpoint string            // host:port of the OTLP/HTTP receiver
+	Secure   bool              // use TLS (a hosted backend such as Axiom)
+	Headers  map[string]string // sent on every export, e.g. Authorization
+}
+
+// InitWith is Init with transport options, for exporting to a hosted backend.
+func InitWith(ctx context.Context, serviceName string, o Options) (func(context.Context) error, error) {
+	traceOpts := []otlptracehttp.Option{otlptracehttp.WithEndpoint(o.Endpoint)}
+	logOpts := []otlploghttp.Option{otlploghttp.WithEndpoint(o.Endpoint)}
+	if !o.Secure {
+		traceOpts = append(traceOpts, otlptracehttp.WithInsecure())
+		logOpts = append(logOpts, otlploghttp.WithInsecure())
+	}
+	if len(o.Headers) > 0 {
+		traceOpts = append(traceOpts, otlptracehttp.WithHeaders(o.Headers))
+		logOpts = append(logOpts, otlploghttp.WithHeaders(o.Headers))
+	}
+
 	// Schemaless on purpose: a resource carrying its own schema URL fails to
 	// merge with resource.Default() whenever the SDK moves to a newer semconv
 	// version ("conflicting Schema URL"), which would stop every service at boot.
@@ -30,14 +54,14 @@ func Init(ctx context.Context, serviceName, endpoint string) (func(context.Conte
 		return nil, err
 	}
 
-	traceExp, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpoint(endpoint), otlptracehttp.WithInsecure())
+	traceExp, err := otlptracehttp.New(ctx, traceOpts...)
 	if err != nil {
 		return nil, err
 	}
 	tp := sdktrace.NewTracerProvider(sdktrace.WithBatcher(traceExp), sdktrace.WithResource(res))
 	otel.SetTracerProvider(tp)
 
-	logExp, err := otlploghttp.New(ctx, otlploghttp.WithEndpoint(endpoint), otlploghttp.WithInsecure())
+	logExp, err := otlploghttp.New(ctx, logOpts...)
 	if err != nil {
 		return nil, err
 	}
