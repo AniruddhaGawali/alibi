@@ -12,9 +12,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ENV CGO_ENABLED=0
-RUN go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
- && go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
- && go build -trimpath -ldflags="-s -w" -o /out/emailctl ./cmd/emailctl
+# nodynamic: gen2brain/webp otherwise links against the glibc loader (via purego) even with
+# CGO off, and the binary then fails on alpine (musl) with "no such file or directory".
+RUN go build -tags nodynamic -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
+ && go build -tags nodynamic -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
+ && go build -tags nodynamic -trimpath -ldflags="-s -w" -o /out/emailctl ./cmd/emailctl
 
 FROM alpine:3.20 AS base
 RUN apk add --no-cache ca-certificates tzdata \

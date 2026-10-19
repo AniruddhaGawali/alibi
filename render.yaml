@@ -57,8 +57,10 @@ services:
       # Logs and traces to Axiom
       - key: AXIOM_API_TOKEN
         sync: false
+      - key: AXIOM_OTLP_ENDPOINT # host of your Axiom ingest URL
+        value: us-east-1.aws.edge.axiom.co
       - key: AXIOM_DATASET
-        value: alibi-prod
+        value: alibi-log
       # Google sign-in (optional): fill these in the dashboard, or delete the three lines.
       - key: GOOGLE_CLIENT_ID
         sync: false
