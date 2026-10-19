@@ -16,6 +16,15 @@ type ActiveCaseLock struct {
 	HintsUsed int32
 }
 
+type AppSetting struct {
+	ID                 bool
+	DailyTokens        int32
+	TokenResetTime     string
+	TokenResetTimezone string
+	UpdatedAt          time.Time
+	UpdatedBy          *string
+}
+
 type CaseNote struct {
 	ID            string
 	UserID        string
@@ -59,6 +68,7 @@ type Story struct {
 	PenaltyTrophies int32
 	Resolution      string
 	Hints           []string
+	MusicTrack      string
 }
 
 type Suspect struct {
@@ -90,5 +100,13 @@ type User struct {
 	CasesSolved   int32
 	AvatarUrl     *string
 	AvatarPath    *string
-	IsAdmin       bool
+	Role          string
+}
+
+type UserIdentity struct {
+	Provider  string
+	Subject   string
+	UserID    string
+	Email     string
+	CreatedAt time.Time
 }

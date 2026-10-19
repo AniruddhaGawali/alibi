@@ -1,3 +1,4 @@
+import { currentUserId } from '@/utils/session'
 import { createApi } from './createApi'
 import type { Difficulty } from './dashboard'
 
@@ -17,7 +18,12 @@ export interface Briefing {
   difficulty_level: Difficulty
   reward_trophies: number
   scenes: Scene[]
-  /** How many hints the case has, how many this player revealed, and the text of those only. */
+  /** How many hints the case has. */
+  hints_total: number
+}
+
+/** GET /api/cases/{id}/hints: what this player has revealed (per player, so not part of the briefing). */
+export interface HintState {
   hints_total: number
   hints_used: number
   hints: string[]
@@ -87,14 +93,21 @@ export const casesApi = createApi({
     getBriefing: build.query<Briefing, string>({
       query: (id) => `/api/cases/${id}/briefing`,
       providesTags: (_result, id) => [{ type: 'Cases', id }],
+      staleTime: 600, // rarely changes; the server also lets the browser keep it
+    }),
+    getHints: build.query<HintState, string>({
+      query: (id) => `/api/cases/${id}/hints`,
+      providesTags: (_result, id) => [{ type: 'Hints', id }],
     }),
     getSuspects: build.query<Suspect[], string>({
       query: (id) => `/api/cases/${id}/suspects`,
       providesTags: (_result, id) => [{ type: 'Cases', id }],
+      staleTime: 600,
     }),
     // 404 while the case is still open: the solution is never sent early
     getResult: build.query<AccusationOutcome, string>({
-      query: (id) => `/api/cases/${id}/result`,
+      // the browser keeps a verdict for a day: the user id in the URL keeps accounts apart (the server ignores it)
+      query: (id) => `/api/cases/${id}/result?u=${currentUserId()}`,
       providesTags: (_result, id) => [{ type: 'Result', id }],
     }),
     getNotes: build.query<CaseNoteItem[], string>({
@@ -116,7 +129,7 @@ export const casesApi = createApi({
     // nothing is charged now: hint n takes n trophies off the reward if the case is solved
     revealHint: build.mutation<RevealedHint, string>({
       query: (caseId) => ({ url: `/api/cases/${caseId}/hints`, method: 'POST' }),
-      invalidatesTags: (_result, caseId) => [{ type: 'Cases', id: caseId }],
+      invalidatesTags: (_result, caseId) => [{ type: 'Hints', id: caseId }],
     }),
     accuse: build.mutation<AccusationOutcome, { caseId: string; suspectId: string }>({
       query: ({ caseId, suspectId }) => ({
@@ -125,18 +138,19 @@ export const casesApi = createApi({
         body: { suspect_id: suspectId },
       }),
       // the lock is gone and the trophies moved: stats, the profile, the leaderboard and the case view change
-      invalidatesTags: (_result, arg) => ['Stats', 'User', 'Leaderboard', 'Stories', 'Cases', { type: 'Result', id: arg.caseId }],
+      invalidatesTags: (_result, arg) => ['Stats', 'User', 'Leaderboard', 'Stories', 'Cases', 'Hints', { type: 'Result', id: arg.caseId }],
     }),
     startCase: build.mutation<CaseLock, string>({
       query: (id) => ({ url: `/api/cases/${id}/start`, method: 'POST' }),
       // the dashboard's active-case banner and stats depend on the lock
-      invalidatesTags: ['Stats', 'Cases'],
+      invalidatesTags: ['Stats', 'Cases', 'Hints'],
     }),
   }),
 })
 
 export const {
   useGetBriefingQuery,
+  useGetHintsQuery,
   useGetSuspectsQuery,
   useGetResultQuery,
   useGetNotesQuery,

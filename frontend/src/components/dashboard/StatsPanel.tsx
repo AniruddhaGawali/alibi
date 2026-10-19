@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { RiCoinsLine, RiSearchEyeLine, RiTrophyLine } from '@remixicon/react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { STATS_POLL_MS, useGetStatsQuery } from '@/api/dashboard'
+import RankProgress from '@/components/game/RankProgress'
+import { useCountUp } from '@/hooks/useCountUp'
 import { cn } from '@/lib/utils'
 import { useGameStore } from '@/store/useGameStore'
 
@@ -14,13 +16,14 @@ export default function StatsPanel({ className }: { className?: string }) {
   return (
     <div className={cn('flex w-full gap-4 lg:flex-col', className)} aria-live="polite">
       <Stat icon={<RiCoinsLine className="size-9" aria-hidden />} label="Tokens" value={tokens ?? stats?.tokens} failed={isError} />
-      <Stat icon={<RiTrophyLine className="size-9" aria-hidden />} label="Trophies" value={trophies ?? stats?.trophies} failed={isError} />
+      <Stat icon={<RiTrophyLine className="size-9" aria-hidden />} label="Trophies" value={trophies ?? stats?.trophies} failed={isError} footer={(trophies ?? stats?.trophies) !== undefined ? <RankProgress trophies={(trophies ?? stats?.trophies)!} /> : undefined} />
       <Stat icon={<RiSearchEyeLine className="size-9" aria-hidden />} label="Solved" value={stats?.cases_solved} failed={isError} />
     </div>
   )
 }
 
-function Stat({ icon, label, value, failed }: { icon: ReactNode; label: string; value?: number; failed?: boolean }) {
+function Stat({ icon, label, value, failed, footer }: { icon: ReactNode; label: string; value?: number; failed?: boolean; footer?: ReactNode }) {
+  const shown = useCountUp(value)
   return (
     <div className="frame flex aspect-square w-28 flex-col items-center justify-center gap-2 border bg-card p-3 text-center sm:w-32 lg:aspect-auto lg:w-full lg:flex-1">
       <span className="text-gold">{icon}</span>
@@ -32,8 +35,9 @@ function Stat({ icon, label, value, failed }: { icon: ReactNode; label: string; 
       ) : value === undefined ? (
         <Skeleton className="h-10 w-14" />
       ) : (
-        <p className="font-heading text-5xl leading-none text-gold">{value}</p>
+        <p className="font-heading text-5xl leading-none text-gold">{shown}</p>
       )}
+      {footer}
     </div>
   )
 }

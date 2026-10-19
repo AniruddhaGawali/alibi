@@ -121,16 +121,13 @@ func TestPGStoreAccuse(t *testing.T) {
 	// The dashboard cards say so too: closed for bob, still open for ann.
 	outcomeOf := func(uid string) *string {
 		t.Helper()
-		list, err := dashboard.NewPGStore(pool).ListStories(ctx, uid)
+		m, err := dashboard.NewPGStore(pool).Outcomes(ctx, uid)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, st := range list {
-			if st.ID == story {
-				return st.Outcome
-			}
+		if o, ok := m[story]; ok {
+			return &o
 		}
-		t.Fatal("story missing from the dashboard list")
 		return nil
 	}
 	if o := outcomeOf(b); o == nil || *o != "solved" {
@@ -219,7 +216,7 @@ func TestHintsCostOnlyOnAWin(t *testing.T) {
 	if _, err := caseStore.RevealHint(ctx, free, story); !errors.Is(err, cases.ErrNotLocked) {
 		t.Fatalf("reveal without a lock: %v", err)
 	}
-	if b, err := caseStore.Briefing(ctx, free, story); err != nil || b.HintsTotal != 3 || b.HintsUsed != 0 || len(b.Hints) != 0 {
+	if b, err := caseStore.HintState(ctx, free, story); err != nil || b.HintsTotal != 3 || b.HintsUsed != 0 || len(b.Hints) != 0 {
 		t.Fatalf("briefing without a lock: %+v %v", b, err)
 	}
 
@@ -234,7 +231,7 @@ func TestHintsCostOnlyOnAWin(t *testing.T) {
 			t.Fatalf("hint %d: %+v %v", i+1, h, err)
 		}
 	}
-	if b, _ := caseStore.Briefing(ctx, p, story); b.HintsUsed != 2 || len(b.Hints) != 2 || b.Hints[1] != "two" {
+	if b, _ := caseStore.HintState(ctx, p, story); b.HintsUsed != 2 || len(b.Hints) != 2 || b.Hints[1] != "two" {
 		t.Fatalf("briefing after 2 hints: %+v", b)
 	}
 	if _, err := caseStore.RevealHint(ctx, p, story); err != nil {

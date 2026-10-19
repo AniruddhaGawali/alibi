@@ -108,17 +108,43 @@ func TestStartTokenResetValidatesConfig(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer rdb.Close()
-	if _, err := StartTokenReset("not a cron", "UTC", 10, &fakeWallet{}, rdb); err == nil {
-		t.Fatal("bad cron spec accepted")
+	ist, _ := time.LoadLocation("Asia/Kolkata")
+	fixed := func(s Schedule, err error) func(context.Context) (Schedule, error) {
+		return func(context.Context) (Schedule, error) { return s, err }
 	}
-	if _, err := StartTokenReset("0 0 * * *", "Mars/Olympus", 10, &fakeWallet{}, rdb); err == nil {
-		t.Fatal("bad timezone accepted")
+	if _, err := StartTokenReset(fixed(Schedule{Tokens: 10, Hour: 25, Loc: time.UTC}, nil), &fakeWallet{}, rdb); err == nil {
+		t.Fatal("bad hour accepted")
 	}
-	c, err := StartTokenReset("30 4 * * *", "Asia/Kolkata", 10, &fakeWallet{}, rdb)
+	if _, err := StartTokenReset(fixed(Schedule{Tokens: 10}, nil), &fakeWallet{}, rdb); err == nil {
+		t.Fatal("missing timezone accepted")
+	}
+	if _, err := StartTokenReset(fixed(Schedule{}, errors.New("db down")), &fakeWallet{}, rdb); err == nil {
+		t.Fatal("load error ignored")
+	}
+	c, err := StartTokenReset(fixed(Schedule{Tokens: 10, Hour: 4, Minute: 30, Loc: ist}, nil), &fakeWallet{}, rdb)
 	if err != nil {
 		t.Fatal(err)
 	}
 	<-c.Stop().Done()
+}
+
+// An edit in the admin panel (Load) moves the reset time and the token count at the next check.
+func TestTokenResetFollowsLoadedSchedule(t *testing.T) {
+	w := &fakeWallet{}
+	at := time.Date(2026, 10, 19, 5, 0, 0, 0, time.UTC)
+	job, _ := newJob(t, w, at)
+	sched := Schedule{Tokens: 7, Hour: 6, Minute: 0, Loc: time.UTC}
+	job.Load = func(context.Context) (Schedule, error) { return sched, nil }
+
+	job.CatchUp() // 05:00, due at 06:00
+	if w.resets != 0 {
+		t.Fatalf("ran before the reset time: %d", w.resets)
+	}
+	sched.Hour = 4 // the admin moves it earlier: it is now overdue
+	job.CatchUp()
+	if w.resets != 1 || w.tokens != 7 {
+		t.Fatalf("resets=%d tokens=%d", w.resets, w.tokens)
+	}
 }
 
 // A run killed mid-way leaves only the short lock behind; the day is not marked done.

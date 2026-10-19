@@ -1,5 +1,5 @@
 import { createApi } from './createApi'
-import type { UserProfile } from './user'
+import type { UserProfile, UserRole } from './user'
 
 export interface SignupInput {
   username: string
@@ -28,7 +28,12 @@ export interface AuthSession {
   jwt_token: string
   refresh_token: string
   expires_in: number
-  user: { id: string; username: string; email: string }
+  user: { id: string; username: string; email: string; role: UserRole }
+}
+
+/** Returned by google/exchange: a session, plus whether the account was just created. */
+export interface GoogleSession extends AuthSession {
+  is_new: boolean
 }
 
 export type { UserProfile }
@@ -48,6 +53,10 @@ export const authApi = createApi({
     login: build.mutation<AuthSession, LoginInput>({
       query: (body) => ({ url: '/api/auth/login', method: 'POST', body }),
     }),
+    // swaps the one-time ticket from the Google redirect for a session
+    googleExchange: build.mutation<GoogleSession, { ticket: string }>({
+      query: (body) => ({ url: '/api/auth/google/exchange', method: 'POST', body }),
+    }),
     logout: build.mutation<{ message: string }, { refresh_token: string }>({
       query: (body) => ({ url: '/api/auth/logout', method: 'POST', body }),
     }),
@@ -59,5 +68,6 @@ export const {
   useResendOtpMutation,
   useVerifyOtpMutation,
   useLoginMutation,
+  useGoogleExchangeMutation,
   useLogoutMutation,
 } = authApi

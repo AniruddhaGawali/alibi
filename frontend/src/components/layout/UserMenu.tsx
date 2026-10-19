@@ -9,6 +9,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import RankBadge from '@/components/game/RankBadge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { STATS_POLL_MS, useGetStatsQuery } from '@/api/dashboard'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -48,6 +49,7 @@ export default function UserMenu() {
             <AvatarFallback>{user.username.slice(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
           <span className="hidden sm:inline">{user.username}</span>
+          <RankBadge trophies={trophies ?? stats?.trophies ?? user.trophies} compact className="hidden sm:inline-flex" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-60">
@@ -58,6 +60,7 @@ export default function UserMenu() {
           </Avatar>
           <div className="min-w-0">
             <p className="truncate font-heading text-base">{user.username}</p>
+            <RankBadge trophies={trophies ?? stats?.trophies ?? user.trophies} />
             <p className="truncate text-xs font-normal text-muted-foreground">{user.email}</p>
           </div>
         </DropdownMenuLabel>
@@ -73,6 +76,11 @@ export default function UserMenu() {
           </div>
         </div>
         <DropdownMenuSeparator />
+        {user.role === 'admin' && (
+          <DropdownMenuItem asChild>
+            <Link to="/admin/dashboard">Admin panel</Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <Link to="/onboarding/avatar">Change avatar</Link>
         </DropdownMenuItem>

@@ -8,22 +8,29 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
 
-// Cache-Control max-age values for uploaded objects. Custom avatars get a fresh
-// UUID name per upload, so they never change and can be cached for a year. Every
-// other path (case art, default avatars) may be overwritten in place by assetctl,
-// so it is cached briefly and a corrected image shows up soon.
+// Cache-Control max-age values for uploaded objects. Custom avatars and admin
+// panel uploads (cases/<case uuid>/<kind>/<uuid>.webp) get a fresh UUID name per
+// upload, so they never change and can be cached for a year. Every other path
+// (case art and default avatars from assetctl) may be overwritten in place, so it
+// is cached briefly and a corrected image shows up soon.
 const (
 	immutableCacheSeconds = 31536000
 	mutableCacheSeconds   = 300
 )
 
+var adminUpload = regexp.MustCompile(`^cases/[0-9a-f-]{36}/(thumbnail|scenes|suspects)/[0-9a-f-]{36}\.webp$`)
+
 // cacheSeconds picks the max-age for an object path.
 func cacheSeconds(path string) int {
 	if strings.HasPrefix(path, "avatars/") && !strings.HasPrefix(path, "avatars/default/") {
+		return immutableCacheSeconds
+	}
+	if adminUpload.MatchString(path) {
 		return immutableCacheSeconds
 	}
 	return mutableCacheSeconds

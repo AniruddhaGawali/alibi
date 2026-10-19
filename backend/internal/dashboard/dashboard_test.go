@@ -22,7 +22,10 @@ type fakeStore struct {
 	err     error
 }
 
-func (f *fakeStore) ListStories(context.Context, string) ([]Story, error) { return f.stories, f.err }
+func (f *fakeStore) ListStories(context.Context) ([]Story, error) { return f.stories, f.err }
+func (f *fakeStore) Outcomes(context.Context, string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (f *fakeStore) Stats(context.Context, string) (UserStats, error) {
 	return f.stats, errors.Join(f.trErr, f.err)
 }
@@ -95,14 +98,15 @@ func TestStats(t *testing.T) {
 	st := &fakeStore{stats: UserStats{Trophies: 7, CasesSolved: 4}}
 	h := newHandler(st, fakeBalance{n: 10})
 	var got statsResp
-	if rec := call(t, h.Stats, &got); rec.Code != 200 || got.Trophies != 7 || got.Tokens != 10 || got.CasesSolved != 4 || got.ActiveCaseTitle != nil {
+	if rec := call(t, h.Stats, &got); rec.Code != 200 || got.Trophies != 7 || got.Tokens != 10 || got.CasesSolved != 4 || got.ActiveCaseTitle != nil || got.ActiveMusic != nil {
 		t.Fatalf("free user: %d %s", rec.Code, rec.Body)
 	}
 
-	st.active = &ActiveCase{CaseID: "c1", StoryID: "s1", Title: "The Locked Study"}
+	st.active = &ActiveCase{CaseID: "c1", StoryID: "s1", Title: "The Locked Study", Music: "bloodmoney"}
 	got = statsResp{}
 	call(t, h.Stats, &got)
-	if got.ActiveCaseTitle == nil || *got.ActiveCaseTitle != "The Locked Study" || got.ActiveStoryID == nil || *got.ActiveStoryID != "s1" {
+	if got.ActiveCaseTitle == nil || *got.ActiveCaseTitle != "The Locked Study" || got.ActiveStoryID == nil || *got.ActiveStoryID != "s1" ||
+		got.ActiveMusic == nil || *got.ActiveMusic != "bloodmoney" {
 		t.Fatalf("locked user: %+v", got)
 	}
 }

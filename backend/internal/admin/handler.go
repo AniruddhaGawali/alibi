@@ -4,42 +4,115 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"regexp"
+	"slices"
+	"strings"
+	"time"
 
 	"backend/internal/llm"
+	"backend/internal/settings"
+	"backend/internal/storage"
+	"backend/internal/user"
 	"backend/pkg/utils"
 )
 
-// ModelChecker confirms a model exists and outputs text only; *llm.Clients
-// implements it.
+// ModelChecker lists the models a case may use and confirms a model exists and
+// outputs text only; *llm.Clients implements it.
 type ModelChecker interface {
 	Enabled() bool
 	CheckTextModel(ctx context.Context, model string) error
+	ListTextModels(ctx context.Context) ([]llm.ModelInfo, error)
+}
+
+type modelsResp struct {
+	Models  []llm.ModelInfo `json:"models"`
+	Default string          `json:"default"` // llm.DefaultModel
+}
+
+// ListModels handles GET /api/admin/models: the OpenRouter models a case can be
+// assigned (text output only, within the price cap), for the case builder's picker.
+func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
+	if !h.models.Enabled() {
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "OpenRouter is not configured, so the model list is unavailable", nil)
+		return
+	}
+	models, err := h.models.ListTextModels(r.Context())
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "list models failed", "err", err)
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "could not load the model list from OpenRouter", nil)
+		return
+	}
+	utils.SuccessResponse(w, http.StatusOK, modelsResp{Models: models, Default: llm.DefaultModel})
+}
+
+// SettingsService serves and saves the global settings; *settings.Service implements it.
+type SettingsService interface {
+	Current(ctx context.Context) settings.Settings
+	Update(ctx context.Context, s settings.Settings, by string) (*settings.Settings, error)
 }
 
 type Handler struct {
-	store  Store
-	models ModelChecker
-	userID func(context.Context) string // auth.UserID in production
+	store     Store
+	models    ModelChecker
+	userID    func(context.Context) string // auth.UserID in production
+	tokenRole func(context.Context) string // the role claim of the access token; nil skips that check
+	images    storage.Provider             // nil: uploads answer 503
+	settings  SettingsService              // nil: the config routes answer 503
+	tokens    TokenGranter                 // nil: granting tokens answers 503
 }
 
-func NewHandler(store Store, models ModelChecker, userID func(context.Context) string) *Handler {
-	return &Handler{store: store, models: models, userID: userID}
+// TokenGranter adds question tokens to one player; *wallet.Service implements it.
+type TokenGranter interface {
+	Grant(ctx context.Context, userID string, amount int64) (int64, error)
 }
 
-// RequireAdmin lets the request through only for users with is_admin. The flag is
-// read from the database on every request, so revoking it takes effect at once.
+// WithTokens enables POST /api/admin/users/{id}/tokens.
+func WithTokens(t TokenGranter) Option { return func(h *Handler) { h.tokens = t } }
+
+// Option configures a Handler.
+type Option func(*Handler)
+
+// WithTokenRole makes AdminOnly refuse a token whose role claim is not admin before
+// touching the database.
+func WithTokenRole(f func(context.Context) string) Option {
+	return func(h *Handler) { h.tokenRole = f }
+}
+
+// WithImages enables POST /api/admin/upload and the removal of replaced images.
+func WithImages(p storage.Provider) Option { return func(h *Handler) { h.images = p } }
+
+// WithSettings enables GET/PUT /api/admin/config.
+func WithSettings(s SettingsService) Option { return func(h *Handler) { h.settings = s } }
+
+func NewHandler(store Store, models ModelChecker, userID func(context.Context) string, opts ...Option) *Handler {
+	h := &Handler{store: store, models: models, userID: userID}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// AdminOnly lets the request through only for admins. The token's role claim is
+// checked first (cheap, and enough to turn away players), then users.role in the
+// database, so an admin who was demoted loses access at once even though their
+// token still says admin. A newly made admin has to log in again to get the claim.
 // Everyone else gets 403.
-func (h *Handler) RequireAdmin(next http.HandlerFunc) http.HandlerFunc {
+func (h *Handler) AdminOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		uid := h.userID(r.Context())
-		ok, err := h.store.IsAdmin(r.Context(), uid)
-		if err != nil {
+		if h.tokenRole != nil && h.tokenRole(r.Context()) != user.RoleAdmin {
+			utils.LogWarnCtx(r.Context(), "admin route denied", "user_id", uid, "path", r.URL.Path, "reason", "token role")
+			utils.ErrorResponse(w, http.StatusForbidden, "admin access required", nil)
+			return
+		}
+		role, err := h.store.Role(r.Context(), uid)
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			utils.LogErrorCtx(r.Context(), "admin check failed", "user_id", uid, "err", err)
 			utils.ErrorResponse(w, http.StatusInternalServerError, "could not check permissions", nil)
 			return
 		}
-		if !ok {
-			utils.LogWarnCtx(r.Context(), "admin route denied", "user_id", uid, "path", r.URL.Path)
+		if role != user.RoleAdmin {
+			utils.LogWarnCtx(r.Context(), "admin route denied", "user_id", uid, "path", r.URL.Path, "reason", "database role")
 			utils.ErrorResponse(w, http.StatusForbidden, "admin access required", nil)
 			return
 		}
@@ -63,6 +136,7 @@ type createCaseReq struct {
 	Hints           []string `json:"hints" validate:"max=3,dive,required,max=1000"`        // progressive hints, easiest first
 	IsPublished     bool     `json:"is_published"`                                         // false (a draft) when left out
 	LLMModel        string   `json:"llm_model" validate:"omitempty,max=100"`               // llm.DefaultModel when left out
+	MusicTrack      string   `json:"music_track"`                                          // a MusicTracks key; "" (left out) plays the main theme
 }
 
 type updateCaseReq struct {
@@ -77,12 +151,43 @@ type updateCaseReq struct {
 	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"` // [] clears them
 	IsPublished     *bool     `json:"is_published"`
 	LLMModel        *string   `json:"llm_model" validate:"omitempty,max=100"`
+	MusicTrack      *string   `json:"music_track"` // "" switches back to the main theme
 }
 
-// CreateCase handles POST /api/admin/cases.
+// ListCases handles GET /api/admin/cases: every case, drafts included.
+func (h *Handler) ListCases(w http.ResponseWriter, r *http.Request) {
+	cases, err := h.store.ListCases(r.Context())
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "list admin cases failed", "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the cases", nil)
+		return
+	}
+	utils.SuccessResponse(w, http.StatusOK, cases)
+}
+
+// GetCase handles GET /api/admin/cases/{id}: the case with its suspects (secrets
+// included) and scenes.
+func (h *Handler) GetCase(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	c, err := h.store.GetCase(r.Context(), id)
+	if err != nil {
+		h.storeFailed(w, r, err, "case", "load case failed")
+		return
+	}
+	utils.SuccessResponse(w, http.StatusOK, c)
+}
+
+// CreateCase handles POST /api/admin/cases. A new case is a draft: add suspects,
+// then publish it with PATCH.
 func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	var req createCaseReq
 	if !utils.BindAndValidate(w, r, &req) {
+		return
+	}
+	if !checkMusic(w, req.MusicTrack) {
 		return
 	}
 	if req.LLMModel == "" {
@@ -102,15 +207,10 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.CreateCase(r.Context(), CaseInput{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: penalty, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
 	})
-	if errors.Is(err, ErrInvalid) {
-		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", nil)
-		return
-	}
 	if err != nil {
-		utils.LogErrorCtx(r.Context(), "create case failed", "err", err)
-		utils.ErrorResponse(w, http.StatusInternalServerError, "could not create the case", nil)
+		h.storeFailed(w, r, err, "case", "create case failed")
 		return
 	}
 	utils.LogInfoCtx(r.Context(), "case created", "admin_id", h.userID(r.Context()), "case_id", c.ID, "llm_model", c.LLMModel)
@@ -119,11 +219,8 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 
 // UpdateCase handles PATCH /api/admin/cases/{id}. Only the fields sent change.
 func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if errs := utils.Validate(struct {
-		ID string `validate:"required,uuid"`
-	}{id}); errs != nil {
-		utils.ErrorResponse(w, http.StatusBadRequest, "invalid case id", map[string]string{"id": "must be a valid UUID"})
+	id, ok := pathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var req updateCaseReq
@@ -134,6 +231,9 @@ func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", map[string]string{"body": "send at least one field to change"})
 		return
 	}
+	if req.MusicTrack != nil && !checkMusic(w, *req.MusicTrack) {
+		return
+	}
 	if req.LLMModel != nil && !h.checkModel(w, r, *req.LLMModel) {
 		return
 	}
@@ -141,22 +241,116 @@ func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 	if req.Hints != nil {
 		hints = append([]string{}, *req.Hints...)
 	}
-	c, err := h.store.UpdateCase(r.Context(), id, CasePatch{
+	c, old, err := h.store.UpdateCase(r.Context(), id, CasePatch{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: req.PenaltyTrophies, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
 	})
+	if err != nil {
+		h.storeFailed(w, r, err, "case", "update case failed")
+		return
+	}
+	h.dropImage(r.Context(), old, c.ThumbnailURL)
+	utils.LogInfoCtx(r.Context(), "case updated", "admin_id", h.userID(r.Context()), "case_id", c.ID, "llm_model", c.LLMModel, "published", c.IsPublished)
+	utils.SuccessResponse(w, http.StatusOK, c)
+}
+
+// DeleteCase handles DELETE /api/admin/cases/{id}. A case anyone has played or is
+// playing is kept (409): unpublish it instead, so their results stay.
+func (h *Handler) DeleteCase(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	images, err := h.store.DeleteCase(r.Context(), id)
+	if err != nil {
+		h.storeFailed(w, r, err, "case", "delete case failed")
+		return
+	}
+	for _, u := range images {
+		h.dropImage(r.Context(), u, "")
+	}
+	utils.LogInfoCtx(r.Context(), "case deleted", "admin_id", h.userID(r.Context()), "case_id", id)
+	utils.SuccessResponse(w, http.StatusOK, map[string]string{"id": id})
+}
+
+// MusicTracks are the case music keys. Each is a static file in the bucket at
+// music/<key>.ogg (uploaded by hand, like the seeded art); the frontend has the same
+// list with display names. A case with no track ("") plays music/main.ogg, which is
+// also what plays whenever a player is not inside a case.
+var MusicTracks = []string{"detective-caution", "bloodmoney", "too-crazy", "solving-the-crime"}
+
+// checkMusic accepts "" or a MusicTracks key, answering 422 itself otherwise.
+func checkMusic(w http.ResponseWriter, track string) bool {
+	if track == "" || slices.Contains(MusicTracks, track) {
+		return true
+	}
+	utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
+		map[string]string{"music_track": "must be one of: " + strings.Join(MusicTracks, ", ") + " (or empty for the main theme)"})
+	return false
+}
+
+// pathID reads a UUID path value, answering 400 itself when it is not one.
+func pathID(w http.ResponseWriter, r *http.Request, name string) (string, bool) {
+	id := r.PathValue(name)
+	if errs := utils.Validate(struct {
+		ID string `validate:"required,uuid"`
+	}{id}); errs != nil {
+		utils.ErrorResponse(w, http.StatusBadRequest, "invalid "+strings.ReplaceAll(name, "_", " "), map[string]string{name: "must be a valid UUID"})
+		return "", false
+	}
+	return id, true
+}
+
+// storeFailed answers a store error: domain errors map to 4xx, anything else is
+// logged and becomes a generic 500. what names the thing ("case", "suspect").
+func (h *Handler) storeFailed(w http.ResponseWriter, r *http.Request, err error, what, logMsg string) {
 	switch {
 	case errors.Is(err, ErrNotFound):
-		utils.ErrorResponse(w, http.StatusNotFound, "case not found", nil)
+		utils.ErrorResponse(w, http.StatusNotFound, what+" not found", nil)
 	case errors.Is(err, ErrInvalid):
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed", nil)
-	case err != nil:
-		utils.LogErrorCtx(r.Context(), "update case failed", "case_id", id, "err", err)
-		utils.ErrorResponse(w, http.StatusInternalServerError, "could not update the case", nil)
+	case errors.Is(err, ErrInUse):
+		utils.ErrorResponse(w, http.StatusConflict, "players have played this case; unpublish it instead of deleting it", nil)
+	case errors.Is(err, ErrNameTaken):
+		utils.ErrorResponse(w, http.StatusConflict, "another suspect in this case has that name", map[string]string{"name": "is already used in this case"})
+	case errors.Is(err, ErrOrderTaken):
+		utils.ErrorResponse(w, http.StatusConflict, "another scene in this case has that position", map[string]string{"display_order": "is already used in this case"})
+	case errors.Is(err, ErrNotReady):
+		utils.ErrorResponse(w, http.StatusConflict, "a published case needs at least 2 suspects and exactly one culprit",
+			map[string]string{"is_published": "needs at least 2 suspects and exactly one culprit"})
+	case errors.Is(err, ErrNeedsKeywords):
+		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
+			map[string]string{"confession_keywords": "add at least one keyword, or the secrets are in the prompt from the first question"})
 	default:
-		utils.LogInfoCtx(r.Context(), "case updated", "admin_id", h.userID(r.Context()), "case_id", c.ID, "llm_model", c.LLMModel)
-		utils.SuccessResponse(w, http.StatusOK, c)
+		utils.LogErrorCtx(r.Context(), logMsg, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not save the "+what, nil)
+	}
+}
+
+// ownedImage matches the objects Upload creates. Only those are ever deleted: case
+// art uploaded by assetctl (cases/case-01/...) or an external URL is left alone.
+var ownedImage = regexp.MustCompile(`^cases/[0-9a-f-]{36}/(thumbnail|scenes|suspects)/[0-9a-f-]{36}\.webp$`)
+
+// dropImage deletes the object behind oldURL from storage when it was replaced
+// (newURL differs) and was uploaded through the admin panel. Best effort: a
+// failure is logged, never returned, and leaves an orphan object behind.
+func (h *Handler) dropImage(ctx context.Context, oldURL, newURL string) {
+	if h.images == nil || oldURL == "" || oldURL == newURL {
+		return
+	}
+	prefix := h.images.PublicURL("")
+	if !strings.HasPrefix(oldURL, prefix) {
+		return
+	}
+	path := strings.TrimPrefix(oldURL, prefix)
+	if !ownedImage.MatchString(path) {
+		return
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := h.images.Delete(dctx, path); err != nil {
+		utils.LogErrorCtx(ctx, "delete replaced image failed", "path", path, "err", err)
 	}
 }
 

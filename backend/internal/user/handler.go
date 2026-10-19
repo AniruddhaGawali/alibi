@@ -71,6 +71,7 @@ type profileResp struct {
 	Avatar       avatarInfo `json:"avatar"`
 	Trophies     int        `json:"trophies"`
 	TokenBalance int64      `json:"token_balance"`
+	Role         string     `json:"role"`
 }
 
 type avatarReq struct {
@@ -108,7 +109,7 @@ func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.SuccessResponse(w, http.StatusOK, profileResp{
 		ID: u.ID, Username: u.Username, Email: u.Email,
-		Avatar: avatarOf(u), Trophies: u.Trophies, TokenBalance: balance,
+		Avatar: avatarOf(u), Trophies: u.Trophies, TokenBalance: balance, Role: u.Role,
 	})
 }
 

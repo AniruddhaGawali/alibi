@@ -15,10 +15,13 @@ Import from `@/components/form`. All take `control` and `name` (typed to your sc
 |---|---|---|
 | `FormInput` | text, email, password, number, OTP | any `<Input>` prop (`type`, `placeholder`, `autoComplete`) |
 | `FormTextarea` | multi-line text | any `<Textarea>` prop |
-| `FormSelect` | one choice from a list | `options: {value,label}[]`, `placeholder`, `disabled` |
+| `FormSelect` | one choice from a short list | `options: {value,label}[]`, `placeholder`, `disabled` |
+| `FormCombobox` | one choice from a long, searchable list (AI models) | `options: {value,label,hint?,keywords?}[]`, `searchPlaceholder`, `emptyText` |
 | `FormRadioGroup` | few visible choices (avatars, suspect pick) | `options` |
 | `FormCheckbox` | boolean consent / agree | `label` required |
-| `FormSwitch` | boolean setting | `label` required |
+| `FormSwitch` | boolean setting | `label` required, `onCheckedChange` (e.g. switch off a competing field) |
+| `FormFile` | one file, value is a `File` | `onFileChange` |
+| `FormImagePicker` | image with preview that uploads on save (admin case art) | `aspect` (`wide` / `portrait`); value is an `ImageValue` `{url, file, preview}`, validate with `imageValueSchema`, default with `emptyImage(url)` |
 
 If the input you need has no wrapper (date picker, OTP slots, file upload), add a new `Form*` component in `src/components/form/` that follows `FormFieldShell` and `FormInput`, export it from `index.ts`, then use it. Install any missing shadcn primitive first (`npx shadcn@latest add <name> -y`). Do not edit files in `components/ui/`.
 

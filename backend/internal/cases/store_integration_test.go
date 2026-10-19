@@ -55,11 +55,11 @@ func TestPGStore(t *testing.T) {
 		t.Fatal("a second culprit in one case must be rejected")
 	}
 
-	b, err := store.Briefing(ctx, "00000000-0000-0000-0000-000000000000", story)
+	b, err := store.Briefing(ctx, story)
 	if err != nil || b.MainPlot != "plot" || len(b.Scenes) != 2 || b.Scenes[0].SceneName != "First" {
 		t.Fatalf("briefing: %+v %v", b, err)
 	}
-	if _, err := store.Briefing(ctx, "00000000-0000-0000-0000-000000000000", hidden); !errors.Is(err, cases.ErrNotFound) {
+	if _, err := store.Briefing(ctx, hidden); !errors.Is(err, cases.ErrNotFound) {
 		t.Fatalf("unpublished briefing: %v", err)
 	}
 	sus, err := store.Suspects(ctx, story)

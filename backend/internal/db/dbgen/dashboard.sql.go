@@ -10,24 +10,30 @@ import (
 )
 
 const getActiveCase = `-- name: GetActiveCase :one
-SELECT l.case_id, l.story_id, s.title
+SELECT l.case_id, l.story_id, s.title, s.music_track
 FROM active_case_locks l
 JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = $1
 `
 
 type GetActiveCaseRow struct {
-	CaseID  string
-	StoryID string
-	Title   string
+	CaseID     string
+	StoryID    string
+	Title      string
+	MusicTrack string
 }
 
-// The case the user is locked into, with its story's id and title for display.
-// A lock on a story that was unpublished since does not count.
+// The case the user is locked into, with its story's id, title and music track
+// (” = the main theme). A lock on a story that was unpublished since does not count.
 func (q *Queries) GetActiveCase(ctx context.Context, userID string) (GetActiveCaseRow, error) {
 	row := q.db.QueryRow(ctx, getActiveCase, userID)
 	var i GetActiveCaseRow
-	err := row.Scan(&i.CaseID, &i.StoryID, &i.Title)
+	err := row.Scan(
+		&i.CaseID,
+		&i.StoryID,
+		&i.Title,
+		&i.MusicTrack,
+	)
 	return i, err
 }
 
@@ -78,10 +84,8 @@ func (q *Queries) GetUsernames(ctx context.Context, ids []string) ([]GetUsername
 }
 
 const listStories = `-- name: ListStories :many
-SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
-       CASE WHEN r.user_id IS NULL THEN '' WHEN r.correct THEN 'solved' ELSE 'failed' END::text AS outcome
+SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies
 FROM stories s
-LEFT JOIN case_results r ON r.story_id = s.id AND r.user_id = $1
 WHERE s.is_published
 ORDER BY s.created_at DESC, s.id
 `
@@ -93,13 +97,12 @@ type ListStoriesRow struct {
 	ThumbnailUrl    string
 	DifficultyLevel string
 	RewardTrophies  int32
-	Outcome         string
 }
 
-// Metadata for the dashboard cards, newest first, with how the caller's own
-// attempt ended (” = not closed yet).
-func (q *Queries) ListStories(ctx context.Context, userID string) ([]ListStoriesRow, error) {
-	rows, err := q.db.Query(ctx, listStories, userID)
+// Metadata for the dashboard cards, newest first. The same for every player (so it can be
+// cached and shared); how each player's own attempts ended is ListUserOutcomes.
+func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
+	rows, err := q.db.Query(ctx, listStories)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +117,37 @@ func (q *Queries) ListStories(ctx context.Context, userID string) ([]ListStories
 			&i.ThumbnailUrl,
 			&i.DifficultyLevel,
 			&i.RewardTrophies,
-			&i.Outcome,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUserOutcomes = `-- name: ListUserOutcomes :many
+SELECT story_id, correct FROM case_results WHERE user_id = $1
+`
+
+type ListUserOutcomesRow struct {
+	StoryID string
+	Correct bool
+}
+
+// How the caller's closed cases ended: story id and whether they solved it.
+func (q *Queries) ListUserOutcomes(ctx context.Context, userID string) ([]ListUserOutcomesRow, error) {
+	rows, err := q.db.Query(ctx, listUserOutcomes, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUserOutcomesRow{}
+	for rows.Next() {
+		var i ListUserOutcomesRow
+		if err := rows.Scan(&i.StoryID, &i.Correct); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

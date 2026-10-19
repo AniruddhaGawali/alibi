@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { RiTrophyLine } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -6,6 +7,8 @@ import Pin from '@/components/game/Pin'
 import Redacted from '@/components/game/Redacted'
 import Stamp from '@/components/game/Stamp'
 import Tape from '@/components/game/Tape'
+import { play } from '@/utils/sound'
+import { cn } from '@/lib/utils'
 import type { Difficulty, Story } from '@/api/dashboard'
 
 const DIFFICULTY: Record<Difficulty, { label: string; variant: 'secondary' | 'default' | 'destructive' }> = {
@@ -21,12 +24,15 @@ const DIFFICULTY: Record<Difficulty, { label: string; variant: 'secondary' | 'de
  */
 export default function StoryCard({
   story,
+  outcome = null,
   inProgress = false,
   locked = false,
   onOpen,
   busy = false,
 }: {
   story: Story
+  /** How the player's own attempt ended; null while the case is open to them. */
+  outcome?: 'solved' | 'failed' | null
   inProgress?: boolean
   /** Another case is in progress, so this one cannot be started yet. */
   locked?: boolean
@@ -36,9 +42,18 @@ export default function StoryCard({
   busy?: boolean
 }) {
   const difficulty = DIFFICULTY[story.difficulty_level]
+  const [shaking, setShaking] = useState(false)
 
   return (
-    <div className="relative z-10 pt-2">
+    <div
+      className={cn('relative z-10 pt-2 transition-transform duration-200', !locked && 'hover:-translate-y-1', shaking && 'shake')}
+      onClick={() => {
+        if (!locked) return
+        play('error')
+        setShaking(true)
+      }}
+      onAnimationEnd={() => setShaking(false)}
+    >
       <Tape />
       <Pin seed={story.id} />
       <Card className="relative pt-0">
@@ -64,11 +79,11 @@ export default function StoryCard({
         </CardContent>
         <CardFooter>
           <Button className="w-full" disabled={busy || locked} onClick={() => onOpen?.(story)}>
-            {story.outcome ? 'View case file' : locked ? 'Locked' : inProgress ? 'Continue' : 'Start'}
+            {outcome ? 'View case file' : locked ? 'Locked' : inProgress ? 'Continue' : 'Start'}
           </Button>
         </CardFooter>
         {locked && <Stamp>Classified</Stamp>}
-        {story.outcome && <Stamp>{story.outcome === 'solved' ? 'Solved' : 'Closed'}</Stamp>}
+        {outcome && <Stamp>{outcome === 'solved' ? 'Solved' : 'Closed'}</Stamp>}
       </Card>
     </div>
   )

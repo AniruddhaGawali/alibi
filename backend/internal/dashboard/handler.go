@@ -40,6 +40,13 @@ type statsResp struct {
 	CasesSolved     int64   `json:"cases_solved"`
 	ActiveCaseTitle *string `json:"active_case_title"` // null when no case is in progress
 	ActiveStoryID   *string `json:"active_story_id"`   // the story being played, null when none
+	// ActiveMusic is the music track of the case in progress ("" = main theme), null
+	// when none: the game plays it on every page while the player is in the case.
+	ActiveMusic *string `json:"active_music_track"`
+	// CaseOutcomes is how each of the caller's closed cases ended ("solved" or "failed"),
+	// by story id. It lives here, not in the story list, so that list is the same for
+	// everyone and can be cached.
+	CaseOutcomes map[string]string `json:"case_outcomes"`
 }
 
 type rankedPlayer struct {
@@ -57,7 +64,7 @@ type activeCaseResp struct {
 
 // Stories handles GET /api/dashboard/stories.
 func (h *Handler) Stories(w http.ResponseWriter, r *http.Request) {
-	stories, err := h.store.ListStories(r.Context(), h.userID(r.Context()))
+	stories, err := h.store.ListStories(r.Context())
 	if err != nil {
 		utils.LogErrorCtx(r.Context(), "list stories failed", "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load stories", nil)
@@ -87,10 +94,16 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 		h.userError(w, r, "load active case failed", uid, err)
 		return
 	}
-	resp := statsResp{Trophies: st.Trophies, Tokens: tokens, CasesSolved: st.CasesSolved}
+	outcomes, err := h.store.Outcomes(ctx, uid)
+	if err != nil {
+		h.userError(w, r, "load case outcomes failed", uid, err)
+		return
+	}
+	resp := statsResp{Trophies: st.Trophies, Tokens: tokens, CasesSolved: st.CasesSolved, CaseOutcomes: outcomes}
 	if active != nil {
 		resp.ActiveCaseTitle = &active.Title
 		resp.ActiveStoryID = &active.StoryID
+		resp.ActiveMusic = &active.Music
 	}
 	utils.SuccessResponse(w, http.StatusOK, resp)
 }

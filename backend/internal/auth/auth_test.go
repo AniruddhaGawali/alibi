@@ -109,7 +109,8 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// same fail-fast settings as db.ConnectRedis, so Redis-down tests do not crawl
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), DialerRetries: 1, DialerRetryTimeout: 5 * time.Millisecond, MaxRetries: 1, MinRetryBackoff: time.Millisecond, MaxRetryBackoff: 5 * time.Millisecond})
 	t.Cleanup(func() { _ = rdb.Close() })
 
 	_, private, _ := net.ParseCIDR("10.0.0.0/8")
@@ -127,7 +128,7 @@ func newEnv(t *testing.T) *env {
 		Limiter: NewLimiter(rdb, Policy{Cooldown: time.Minute, EmailDailyMax: 3, IPMax: 4, IPWindow: 15 * time.Minute}),
 		Mail:    e.mail, Coins: e.coins,
 		TrustedProxies: []*net.IPNet{private},
-		InitialTokens:  10,
+		InitialTokens:  func(context.Context) int { return 10 },
 	})
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/auth/signup", e.h.Signup)
@@ -642,7 +643,7 @@ func TestMiddlewareRejectsBadTokens(t *testing.T) {
 	e := newEnv(t)
 	tk := signup(t, e)
 	other := NewTokenManager(strings.Repeat("x", 32), time.Minute, time.Minute)
-	forged, _, _ := other.Issue("user-1", "a@b.co", Access)
+	forged, _, _ := other.Issue("user-1", "a@b.co", "user", Access)
 
 	for name, tok := range map[string]string{"missing": "", "garbage": "abc", "wrong secret": forged, "refresh type": tk.Refresh} {
 		if rec := e.do("GET", "/api/me", "", tok); rec.Code != http.StatusUnauthorized {

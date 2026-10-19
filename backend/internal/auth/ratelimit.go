@@ -114,9 +114,20 @@ return 0
 type Limiter struct {
 	rdb *redis.Client
 	p   Policy
+	mem *memLimits // in-process stand-in while Redis is down; nil = no fallback
 }
 
 func NewLimiter(rdb *redis.Client, p Policy) *Limiter { return &Limiter{rdb: rdb, p: p.withDefaults()} }
+
+// WithFallback makes HitIP and the login lockout fall back to in-process counters (memLimits)
+// when Redis cannot be reached, instead of returning the error (which answers 503), so login
+// and token refresh keep working through a Redis outage.
+func (l *Limiter) WithFallback(on bool) *Limiter {
+	if on {
+		l.mem = newMemLimits()
+	}
+	return l
+}
 
 func (l *Limiter) Cooldown() time.Duration { return l.p.Cooldown }
 
@@ -184,6 +195,14 @@ end
 return 0
 `)
 
+// ceilDuration rounds a wait up to whole seconds (0 stays 0).
+func ceilDuration(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return ceilSeconds(d.Milliseconds())
+}
+
 func ceilSeconds(ms int64) time.Duration {
 	return (time.Duration(ms)*time.Millisecond + time.Second - 1).Truncate(time.Second)
 }
@@ -195,6 +214,9 @@ func (l *Limiter) HitIP(ctx context.Context, scope, ip string) (time.Duration, e
 	ms, err := hitScript.Run(ctx, l.rdb, []string{"ratelimit:authip:" + scope + ":" + ip},
 		l.p.AuthIPMax, int(l.p.AuthIPWindow.Seconds())).Int64()
 	if err != nil {
+		if l.mem != nil {
+			return ceilDuration(l.mem.hit(scope+":"+ip, l.p.AuthIPMax, l.p.AuthIPWindow)), nil
+		}
 		return 0, fmt.Errorf("auth: rate limit: %w", err)
 	}
 	if ms <= 0 {
@@ -243,6 +265,9 @@ func (l *Limiter) LoginLocked(ctx context.Context, emailID, ip string) (time.Dur
 	for _, k := range []string{loginLockKey("email", emailID), loginLockKey("ip", ip)} {
 		p, err := l.rdb.PTTL(ctx, k).Result()
 		if err != nil {
+			if l.mem != nil {
+				return ceilDuration(l.mem.locked(loginLockKey("email", emailID), loginLockKey("ip", ip))), nil
+			}
 			return 0, fmt.Errorf("auth: rate limit: %w", err)
 		}
 		wait = max(wait, p.Milliseconds())
@@ -263,6 +288,10 @@ func (l *Limiter) LoginFailed(ctx context.Context, emailID, ip string) error {
 		err := failScript.Run(ctx, l.rdb, []string{loginFailKey(s.kind, s.id), loginLockKey(s.kind, s.id)},
 			s.max, int(l.p.LoginLockBase.Seconds()), int(l.p.LoginLockCap.Seconds()), memory).Err()
 		if err != nil {
+			if l.mem != nil {
+				l.mem.failed(loginFailKey(s.kind, s.id), loginLockKey(s.kind, s.id), s.max, l.p.LoginLockBase, l.p.LoginLockCap, time.Duration(memory)*time.Second)
+				continue
+			}
 			return fmt.Errorf("auth: rate limit: %w", err)
 		}
 	}
@@ -272,5 +301,8 @@ func (l *Limiter) LoginFailed(ctx context.Context, emailID, ip string) error {
 // LoginSucceeded forgets the email's failures (the IP's are kept: one correct
 // login must not reset a credential-stuffing source).
 func (l *Limiter) LoginSucceeded(ctx context.Context, emailID string) {
+	if l.mem != nil {
+		l.mem.forget(loginFailKey("email", emailID), loginLockKey("email", emailID))
+	}
 	_ = l.rdb.Del(ctx, loginFailKey("email", emailID), loginLockKey("email", emailID)).Err()
 }

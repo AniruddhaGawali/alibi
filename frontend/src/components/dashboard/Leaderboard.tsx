@@ -1,24 +1,26 @@
 import type { ReactNode } from 'react'
-import { RiTrophyLine } from '@remixicon/react'
+import { RiMedalLine, RiTrophyLine } from '@remixicon/react'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { LEADERBOARD_POLL_MS, useGetLeaderboardQuery } from '@/api/dashboard'
+import RankBadge from '@/components/game/RankBadge'
 import { cn } from '@/lib/utils'
 
 /**
  * Top players by trophies as a table, refetched every few seconds. `side` (the stats)
  * is placed to the right of the framed table, top and bottom aligned with the frame.
  */
-export default function Leaderboard({ side }: { side?: ReactNode }) {
+export default function Leaderboard({ side, centered = false }: { side?: ReactNode; centered?: boolean }) {
   const { data: entries, isPending, error } = useGetLeaderboardQuery(undefined, {
     refetchInterval: LEADERBOARD_POLL_MS,
   })
 
   return (
     <section className="space-y-3">
-      <h2 className="text-2xl">Leaderboard</h2>
-      <div className="grid gap-x-2 lg:grid-cols-[1fr_11.5rem]">
+      <h2 className={cn(centered ? 'text-center text-4xl text-primary' : 'text-2xl')}>Leaderboard</h2>
+      {/* the side column is only reserved when there is something to put in it */}
+      <div className={cn('grid gap-x-2', side && 'lg:grid-cols-[1fr_11.5rem]')}>
       <div className="min-w-0">
       {isPending ? (
         <div className="space-y-2">
@@ -40,6 +42,7 @@ export default function Leaderboard({ side }: { side?: ReactNode }) {
               <TableRow>
                 <TableHead className="w-16">Rank</TableHead>
                 <TableHead>Detective</TableHead>
+                <TableHead className="hidden sm:table-cell">Title</TableHead>
                 <TableHead className="text-right">
                   <span className="inline-flex items-center gap-1">
                     <RiTrophyLine className="size-4 text-gold" aria-hidden />
@@ -49,10 +52,19 @@ export default function Leaderboard({ side }: { side?: ReactNode }) {
               </TableRow>
             </TableHeader>
             <TableBody aria-live="polite">
-              {entries.map((e) => (
-                <TableRow key={e.rank} className={cn(e.is_me && 'bg-primary/10 text-primary')}>
-                  <TableCell className="font-heading">{e.rank}</TableCell>
+              {entries.map((e, i) => (
+                <TableRow
+                  key={e.rank}
+                  style={{ animationDelay: `${i * 50}ms` }}
+                  className={cn('row-in', e.is_me && 'bg-primary/10 text-primary')}
+                >
+                  <TableCell className={cn('font-heading', e.rank <= 3 && 'text-gold')}>
+                    {e.rank <= 3 ? <RiMedalLine className="size-5" aria-label={`Rank ${e.rank}`} /> : e.rank}
+                  </TableCell>
                   <TableCell className="max-w-0 truncate">{e.username}</TableCell>
+                  <TableCell className="hidden sm:table-cell">
+                    <RankBadge trophies={e.trophies} />
+                  </TableCell>
                   <TableCell className="text-right text-gold">{e.trophies}</TableCell>
                 </TableRow>
               ))}

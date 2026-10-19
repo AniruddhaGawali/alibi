@@ -17,6 +17,15 @@ func ClaimsFrom(ctx context.Context) (*Claims, bool) {
 	return c, ok
 }
 
+// Role returns the role claim of the authenticated user's access token ("" for a
+// token issued before roles were added).
+func Role(ctx context.Context) string {
+	if c, ok := ClaimsFrom(ctx); ok {
+		return c.Role
+	}
+	return ""
+}
+
 // UserID returns the authenticated user's ID set by Middleware.
 func UserID(ctx context.Context) string {
 	if c, ok := ClaimsFrom(ctx); ok {
@@ -96,12 +105,17 @@ func Middleware(tm *TokenManager, bl *Blacklist, public *PublicRoutes) func(http
 			}
 			revoked, err := bl.IsRevoked(r.Context(), claims.ID)
 			if err != nil {
-				// Fail closed: without the blacklist we cannot tell a logged-out token apart.
-				utils.LogErrorCtx(r.Context(), "blacklist check failed", "err", err)
-				utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
-				return
-			}
-			if revoked {
+				if !bl.FailOpen() {
+					// Fail closed: without the blacklist we cannot tell a logged-out token apart.
+					utils.LogErrorCtx(r.Context(), "blacklist check failed", "err", err)
+					utils.ErrorResponse(w, http.StatusServiceUnavailable, "service unavailable", nil)
+					return
+				}
+				// Fail open (AUTH_FAIL_OPEN_WHEN_REDIS_DOWN): the token is otherwise valid, and a
+				// Redis outage should not lock every player out. Revocations made on this instance
+				// are still honoured (Blacklist.revokedHere).
+				utils.LogWarnCtx(r.Context(), "blacklist check failed; letting the request through", "user_id", claims.Subject, "err", err)
+			} else if revoked {
 				utils.LogInfoCtx(r.Context(), "auth rejected: revoked token", "user_id", claims.Subject)
 				unauthorized(w)
 				return

@@ -1,12 +1,14 @@
 -- name: ListStories :many
--- Metadata for the dashboard cards, newest first, with how the caller's own
--- attempt ended ('' = not closed yet).
-SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
-       CASE WHEN r.user_id IS NULL THEN '' WHEN r.correct THEN 'solved' ELSE 'failed' END::text AS outcome
+-- Metadata for the dashboard cards, newest first. The same for every player (so it can be
+-- cached and shared); how each player's own attempts ended is ListUserOutcomes.
+SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies
 FROM stories s
-LEFT JOIN case_results r ON r.story_id = s.id AND r.user_id = @user_id
 WHERE s.is_published
 ORDER BY s.created_at DESC, s.id;
+
+-- name: ListUserOutcomes :many
+-- How the caller's closed cases ended: story id and whether they solved it.
+SELECT story_id, correct FROM case_results WHERE user_id = @user_id;
 
 -- name: GetUserStats :one
 SELECT trophies, cases_solved FROM users WHERE id = @id;
@@ -25,9 +27,9 @@ ORDER BY trophies DESC, created_at, id
 LIMIT @max_rows::int;
 
 -- name: GetActiveCase :one
--- The case the user is locked into, with its story's id and title for display.
--- A lock on a story that was unpublished since does not count.
-SELECT l.case_id, l.story_id, s.title
+-- The case the user is locked into, with its story's id, title and music track
+-- ('' = the main theme). A lock on a story that was unpublished since does not count.
+SELECT l.case_id, l.story_id, s.title, s.music_track
 FROM active_case_locks l
 JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = @user_id;

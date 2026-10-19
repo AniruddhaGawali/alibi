@@ -54,9 +54,12 @@ type Guard interface {
 
 // GuardConfig sets the limits of a RedisGuard.
 type GuardConfig struct {
-	PerMinute        int           // requests per player per minute
-	IPPerMinute      int           // requests per address per minute
-	UserDailyCalls   int           // model calls per player per UTC day, refunded or not
+	PerMinute      int // requests per player per minute
+	IPPerMinute    int // requests per address per minute
+	UserDailyCalls int // model calls per player per UTC day, refunded or not
+	// DailyCalls, when set, replaces UserDailyCalls on every question, so it can
+	// follow the daily token allowance edited in the admin panel.
+	DailyCalls       func(context.Context) int
 	RefundsPerDay    int           // tokens given back per player per UTC day
 	MaxConcurrent    int           // model calls in flight in this process
 	DailyCallBudget  int64         // model calls per UTC day across all players; 0 = no limit
@@ -227,8 +230,12 @@ func (g *RedisGuard) Begin(ctx context.Context, userID string) (func(), error) {
 
 	// The daily allowance counts every call that reached the provider, and is never
 	// given back: a refund returns a token, not a call.
-	if g.cfg.UserDailyCalls > 0 {
-		wait, err := g.window(ctx, "llm:calls:"+userID+":"+day, g.cfg.UserDailyCalls, left)
+	dailyCalls := g.cfg.UserDailyCalls
+	if g.cfg.DailyCalls != nil {
+		dailyCalls = g.cfg.DailyCalls(ctx)
+	}
+	if dailyCalls > 0 {
+		wait, err := g.window(ctx, "llm:calls:"+userID+":"+day, dailyCalls, left)
 		if err != nil {
 			release()
 			return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
