@@ -25,3 +25,11 @@ Lord Harrington was found dead in his study at 10:00 AM, a spilled cup of Earl G
   - Thomas glimpsed Beatrice leaving the study at about 9:45 AM but protects her out of loyalty; he admits it when pressed on who went near the study after he served the tea.
   - Lady Eleanor admits the gambling debt when asked about money or why she is so defensive.
   - Arthur keeps rat poison (arsenic, not cyanide) in a locked shed and admits it when asked about poisons.
+
+## Hints (P6)
+
+Revealed one at a time with the Hint button; hint *n* costs *n* trophies off the reward if the case is solved (1, 3 or 6 in total, never below a 0 reward). They are in `backend/sql/seed/dev_seed.sql`.
+
+1. Look at the clock: the tea was served at 9:30 and the body found at 10:00, so the poisoner acted inside that half hour.
+2. The cyanide went into the cup, so the poisoner was in the study after the tea was served: ask who went near the study afterwards.
+3. One suspect claims to have been upstairs all morning yet was seen leaving the study at about 9:45: ask who was last in the study.

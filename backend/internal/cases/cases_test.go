@@ -24,10 +24,13 @@ type fakeStore struct {
 	notes    []Note
 	notesErr error
 	known    map[string]bool // cases Start accepts
+	closed   map[string]bool // cases the player already closed
+	result   *Result
+	hintErr  error
 	started  int
 }
 
-func (f *fakeStore) Briefing(_ context.Context, id string) (*Briefing, error) {
+func (f *fakeStore) Briefing(_ context.Context, _, id string) (*Briefing, error) {
 	if f.err != nil || f.briefing == nil || f.briefing.ID != id {
 		return nil, errOr(f.err)
 	}
@@ -39,6 +42,18 @@ func (f *fakeStore) Suspects(_ context.Context, id string) ([]Suspect, error) {
 	}
 	return f.suspects, nil
 }
+func (f *fakeStore) Result(context.Context, string, string) (*Result, error) {
+	if f.result == nil {
+		return nil, ErrNotFound
+	}
+	return f.result, nil
+}
+func (f *fakeStore) RevealHint(context.Context, string, string) (*Hint, error) {
+	if f.hintErr != nil {
+		return nil, f.hintErr
+	}
+	return &Hint{Hint: "Look at the clock.", Number: 1, Cost: 1, HintsTotal: 3}, nil
+}
 func (f *fakeStore) Lock(context.Context, string) (*Lock, error) { return f.lock, nil }
 func (f *fakeStore) Start(_ context.Context, _, storyID string) (*Lock, error) {
 	switch {
@@ -46,6 +61,8 @@ func (f *fakeStore) Start(_ context.Context, _, storyID string) (*Lock, error) {
 		return nil, f.err
 	case !f.known[storyID]:
 		return nil, ErrNotFound
+	case f.closed[storyID]:
+		return nil, ErrClosed
 	case f.lock != nil && f.lock.StoryID != storyID:
 		return nil, ErrLockedElsewhere
 	}
@@ -275,5 +292,68 @@ func TestNoteTiedToLogEntry(t *testing.T) {
 	h.logs = nil
 	if rec := notesReq(h.AddNote, "POST", `{"body":"x","chat_message_id":"m1"}`); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no lookup: %d", rec.Code)
+	}
+}
+
+func TestStartClosedCaseIs409(t *testing.T) {
+	st := &fakeStore{known: map[string]bool{caseA: true}, closed: map[string]bool{caseA: true}}
+	h := NewHandler(st, func(context.Context) string { return "u" })
+	req := httptest.NewRequest(http.MethodPost, "/api/cases/"+caseA+"/start", nil)
+	req.SetPathValue("id", caseA)
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestResult(t *testing.T) {
+	get := func(st *fakeStore) *httptest.ResponseRecorder {
+		h := NewHandler(st, func(context.Context) string { return "u" })
+		req := httptest.NewRequest(http.MethodGet, "/api/cases/"+caseA+"/result", nil)
+		req.SetPathValue("id", caseA)
+		rec := httptest.NewRecorder()
+		h.Result(rec, req)
+		return rec
+	}
+	if rec := get(&fakeStore{}); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "culprit_name") {
+		t.Fatalf("open case must be 404 and reveal nothing: %d %s", rec.Code, rec.Body)
+	}
+	rec := get(&fakeStore{result: &Result{Correct: true, CulpritName: "Ada", Resolution: "Ada did it."}})
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Ada did it.") {
+		t.Fatalf("closed case: %d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestHints(t *testing.T) {
+	cases := []struct {
+		name   string
+		err    error
+		status int
+	}{
+		{"revealed", nil, 200},
+		{"not locked", ErrNotLocked, 403},
+		{"none left", ErrNoHints, 400},
+		{"database error", errors.New("boom"), 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHandler(&fakeStore{hintErr: tc.err}, func(context.Context) string { return "u" })
+			req := httptest.NewRequest(http.MethodPost, "/api/cases/"+caseA+"/hints", nil)
+			req.SetPathValue("id", caseA)
+			rec := httptest.NewRecorder()
+			h.Hints(rec, req)
+			if rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.status, rec.Body)
+			}
+		})
+	}
+	h := NewHandler(&fakeStore{}, func(context.Context) string { return "u" })
+	req := httptest.NewRequest(http.MethodPost, "/api/cases/nope/hints", nil)
+	req.SetPathValue("id", "nope")
+	rec := httptest.NewRecorder()
+	h.Hints(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("bad id: %d", rec.Code)
 	}
 }

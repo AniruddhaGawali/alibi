@@ -9,5 +9,6 @@ export function clearSession(): void {
   deleteRefreshToken()
   queryClient.clear()
   useGameStore.getState().setTokenBalance(null) // the next user must not see this balance
+  useGameStore.setState({ trophies: null, outcomes: {}, hints: {} }) // nor these trophies or closed cases
   useSessionStore.getState().signOut()
 }

@@ -9,11 +9,12 @@ import { useGameStore } from '@/store/useGameStore'
 export default function StatsPanel({ className }: { className?: string }) {
   const { data: stats, isError } = useGetStatsQuery(undefined, { refetchInterval: STATS_POLL_MS })
   const tokens = useGameStore((s) => s.tokenBalance)
+  const trophies = useGameStore((s) => s.trophies)
 
   return (
     <div className={cn('flex w-full gap-4 lg:flex-col', className)} aria-live="polite">
       <Stat icon={<RiCoinsLine className="size-9" aria-hidden />} label="Tokens" value={tokens ?? stats?.tokens} failed={isError} />
-      <Stat icon={<RiTrophyLine className="size-9" aria-hidden />} label="Trophies" value={stats?.trophies} failed={isError} />
+      <Stat icon={<RiTrophyLine className="size-9" aria-hidden />} label="Trophies" value={trophies ?? stats?.trophies} failed={isError} />
       <Stat icon={<RiSearchEyeLine className="size-9" aria-hidden />} label="Solved" value={stats?.cases_solved} failed={isError} />
     </div>
   )

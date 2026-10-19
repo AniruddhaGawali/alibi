@@ -140,17 +140,17 @@
 ## Phase 5: Case Resolution & Admin (P5)
 
 ### P5.1 Accusation Backend (Go)
-- [ ] Create the final accusation submission API.
-- [ ] Implement logic to evaluate the selected suspect against the true culprit in PostgreSQL.
-- [ ] Update the user's Trophies in PostgreSQL. A win pays trophies only: no bonus tokens (the `reward_tokens` column was removed in migration 00013).
-- [ ] Update the user's score in the Redis Leaderboard (ZINCRBY).
-- [ ] Unlock the user's "Active Case Lock".
+- [x] Create the final accusation submission API (`POST /api/cases/{id}/accuse` `{suspect_id}`; 403 unless the player holds the lock; answers `correct`, `trophies`, `trophies_change`, `culprit_*`, `resolution`).
+- [x] Implement logic to evaluate the selected suspect against the true culprit in PostgreSQL.
+- [x] Update the user's Trophies in PostgreSQL (`reward_trophies` on a win, `penalty_trophies` on a loss, never below zero; both are set per case by the admin, along with the `resolution` text). A win pays trophies only: no bonus tokens (the `reward_tokens` column was removed in migration 00013).
+- [x] Update the user's score in the Redis Leaderboard (ZINCRBY on the `leaderboard` set by the exact change; the dashboard leaderboard reads that set and rebuilds it from Postgres every 5 minutes, or when it is empty or Redis was down).
+- [x] Unlock the user's "Active Case Lock".
 
 ### P5.2 Accusation Frontend (React)
-- [ ] Build the final Accusation UI displaying all suspect avatars for selection.
-- [ ] Build the "Submit Deduction" confirmation flow.
-- [ ] Build the Case Outcome reveal screen (Win/Loss animations, updated trophies/tokens display).
-- [ ] Stamp the outcome onto the case file with the existing `Stamp` component ("SOLVED" / "GUILTY" / "WRONG").
+- [x] Build the final Accusation UI displaying all suspect avatars for selection.
+- [x] Build the "Submit Deduction" confirmation flow.
+- [x] Build the Case Outcome reveal screen (Win/Loss animations, updated trophies/tokens display).
+- [x] Stamp the outcome onto the case file with the existing `Stamp` component ("SOLVED" / "GUILTY" / "WRONG").
 
 ### P5.3 Admin Panel (Go & React)
 - [ ] **Backend:** Create secured Admin APIs to update global configurations (daily token limits, specific refresh times).

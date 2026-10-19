@@ -30,6 +30,9 @@ type Case struct {
 	ThumbnailURL    string    `json:"thumbnail_url"`
 	DifficultyLevel string    `json:"difficulty_level"`
 	RewardTrophies  int       `json:"reward_trophies"`
+	PenaltyTrophies int       `json:"penalty_trophies"`
+	Resolution      string    `json:"resolution"`
+	Hints           []string  `json:"hints"` // up to 3, revealed one by one (hint n costs n trophies on a win)
 	IsPublished     bool      `json:"is_published"`
 	LLMModel        string    `json:"llm_model"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -38,7 +41,9 @@ type Case struct {
 // CaseInput is a new case; every field is set.
 type CaseInput struct {
 	Title, Synopsis, MainPlot, ThumbnailURL, DifficultyLevel string
-	RewardTrophies                                           int32
+	RewardTrophies, PenaltyTrophies                          int32
+	Resolution                                               string
+	Hints                                                    []string
 	IsPublished                                              bool
 	LLMModel                                                 string
 }
@@ -46,7 +51,9 @@ type CaseInput struct {
 // CasePatch changes only the non-nil fields.
 type CasePatch struct {
 	Title, Synopsis, MainPlot, ThumbnailURL, DifficultyLevel *string
-	RewardTrophies                                           *int32
+	RewardTrophies, PenaltyTrophies                          *int32
+	Resolution                                               *string
+	Hints                                                    []string // nil keeps the current hints; empty clears them
 	IsPublished                                              *bool
 	LLMModel                                                 *string
 }
@@ -73,9 +80,12 @@ func (s *PGStore) IsAdmin(ctx context.Context, userID string) (bool, error) {
 }
 
 func (s *PGStore) CreateCase(ctx context.Context, in CaseInput) (*Case, error) {
+	if in.Hints == nil {
+		in.Hints = []string{} // the column is NOT NULL
+	}
 	r, err := s.q.AdminCreateCase(ctx, dbgen.AdminCreateCaseParams{
 		Title: in.Title, Synopsis: in.Synopsis, MainPlot: in.MainPlot, ThumbnailUrl: in.ThumbnailURL,
-		DifficultyLevel: in.DifficultyLevel, RewardTrophies: in.RewardTrophies,
+		DifficultyLevel: in.DifficultyLevel, RewardTrophies: in.RewardTrophies, PenaltyTrophies: in.PenaltyTrophies, Resolution: in.Resolution, Hints: in.Hints,
 		IsPublished: in.IsPublished, LlmModel: in.LLMModel,
 	})
 	if err != nil {
@@ -83,7 +93,7 @@ func (s *PGStore) CreateCase(ctx context.Context, in CaseInput) (*Case, error) {
 	}
 	return &Case{
 		ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, MainPlot: r.MainPlot, ThumbnailURL: r.ThumbnailUrl,
-		DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies),
+		DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), PenaltyTrophies: int(r.PenaltyTrophies), Resolution: r.Resolution, Hints: r.Hints,
 		IsPublished: r.IsPublished, LLMModel: r.LlmModel, CreatedAt: r.CreatedAt,
 	}, nil
 }
@@ -91,7 +101,7 @@ func (s *PGStore) CreateCase(ctx context.Context, in CaseInput) (*Case, error) {
 func (s *PGStore) UpdateCase(ctx context.Context, id string, p CasePatch) (*Case, error) {
 	r, err := s.q.AdminUpdateCase(ctx, dbgen.AdminUpdateCaseParams{
 		ID: id, Title: p.Title, Synopsis: p.Synopsis, MainPlot: p.MainPlot, ThumbnailUrl: p.ThumbnailURL,
-		DifficultyLevel: p.DifficultyLevel, RewardTrophies: p.RewardTrophies,
+		DifficultyLevel: p.DifficultyLevel, RewardTrophies: p.RewardTrophies, PenaltyTrophies: p.PenaltyTrophies, Resolution: p.Resolution, Hints: p.Hints,
 		IsPublished: p.IsPublished, LlmModel: p.LLMModel,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -102,7 +112,7 @@ func (s *PGStore) UpdateCase(ctx context.Context, id string, p CasePatch) (*Case
 	}
 	return &Case{
 		ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, MainPlot: r.MainPlot, ThumbnailURL: r.ThumbnailUrl,
-		DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies),
+		DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), PenaltyTrophies: int(r.PenaltyTrophies), Resolution: r.Resolution, Hints: r.Hints,
 		IsPublished: r.IsPublished, LLMModel: r.LlmModel, CreatedAt: r.CreatedAt,
 	}, nil
 }

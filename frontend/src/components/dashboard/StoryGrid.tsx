@@ -47,10 +47,12 @@ export default function StoryGrid() {
               busy={startCase.isPending}
               onOpen={(s) => {
                 play('paper')
-                startCase.mutate(s.id)
+                // a closed case is only read, never started again
+                if (s.outcome) navigate(`/case/${s.id}`)
+                else startCase.mutate(s.id)
               }}
               inProgress={story.id === activeId}
-              locked={activeId !== null && story.id !== activeId}
+              locked={activeId !== null && story.id !== activeId && !story.outcome}
             />
           ))}
           </div>

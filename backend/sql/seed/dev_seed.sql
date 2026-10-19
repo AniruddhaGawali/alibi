@@ -29,6 +29,15 @@ UPDATE stories SET
         'Interrogate each of them, compare their stories and find where the timeline does not hold. You have a limited number of questions, so spend them wisely, then name the person who poisoned the tea.'
 WHERE title = 'The Poisoned Earl Grey';
 
+-- Case #01 hints (up to 3, easiest first). Hint n costs n trophies off the reward on a
+-- win (1 = 1, 2 = 3, 3 = 6 in total); none of them name the culprit outright.
+UPDATE stories SET hints = ARRAY[
+    'Look at the clock. The tea was served at 9:30 and the body was found at 10:00, so whoever did this acted inside that half hour. Ask everyone where they really were in it.',
+    'Cyanide has to go into the cup itself, which means the poisoner stood in the study after the tea was served. Do not ask who served it; ask who went near the study afterwards.',
+    'One suspect claims to have been sweeping the upstairs corridor all morning, yet was seen coming out of the study at about 9:45. Ask who was last in the study, and press whoever saw them.'
+]
+WHERE title = 'The Poisoned Earl Grey';
+
 INSERT INTO case_scenes (case_id, scene_name, image_url, display_order)
 SELECT s.id, v.scene_name, :'asset_base' || v.path, v.display_order
 FROM stories s,

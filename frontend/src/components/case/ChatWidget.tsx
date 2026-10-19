@@ -9,11 +9,11 @@ import TokenCounter from '@/components/chat/TokenCounter'
 import { useChatStore } from '@/store/useChatStore'
 
 /**
- * Floating chat button (bottom right) and the interrogation window it opens. The
+ * Chat button (bottom of the floating column) and the interrogation window it opens. The
  * open state and the selected suspect live in the chat store, so a suspect card's
  * Chat button opens this with that suspect already chosen.
  */
-export default function ChatWidget({ caseId }: { caseId: string }) {
+export default function ChatWidget({ caseId, locked = false }: { caseId: string; locked?: boolean }) {
   const { data: suspects } = useGetSuspectsQuery(caseId)
   const { isChatOpen, activeChatSuspectId, openChat, closeChat, setActiveChatSuspect, reset } = useChatStore()
 
@@ -24,14 +24,14 @@ export default function ChatWidget({ caseId }: { caseId: string }) {
 
   return (
     <>
-      {/* the wrapper is what is fixed: the theme gives buttons their own position */}
-      <div className="fixed right-6 bottom-6 z-40">
-        <Button size="icon-lg" onClick={() => openChat()} aria-label="Open chat" className="size-14 shadow-[var(--glow-gold-strong)]">
+      {/* not fixed itself: CaseBriefing stacks this under the hint button in one column */}
+      <div className="shrink-0">
+        <Button size="icon-lg" disabled={locked} title={locked ? 'This case is closed' : undefined} onClick={() => openChat()} aria-label="Open chat" className="size-14 shadow-[var(--glow-gold-strong)]">
           <RiChat3Line className="size-7" aria-hidden />
         </Button>
       </div>
 
-      <Sheet open={isChatOpen} onOpenChange={(open) => (open ? openChat() : closeChat())}>
+      <Sheet open={isChatOpen && !locked} onOpenChange={(open) => (open ? openChat() : closeChat())}>
         <SheetContent side="right" className="w-full gap-0 data-[side=right]:sm:max-w-lg">
           <SheetHeader className="border-b pr-14">
             <div className="flex items-center justify-between gap-3">

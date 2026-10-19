@@ -21,7 +21,7 @@ interface BubbleProps {
 
 /**
  * One line of the interrogation. The detective is on the right in a clean, modern
- * bubble; the suspect is on the left on aged paper in typewriter type; notices (a
+ * bubble; the suspect is on the left in a dark gold-edged card in typewriter type; notices (a
  * timeout, an error) are centred.
  */
 export default function MessageBubble({ from, text, label, avatarUrl, animate = false, id, blocked }: BubbleProps) {
@@ -53,8 +53,8 @@ export default function MessageBubble({ from, text, label, avatarUrl, animate = 
         {label && <span className="text-xs text-muted-foreground">{label}</span>}
         <p
           className={cn(
-            'case-sheet relative px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap after:absolute after:top-2.5 after:-left-1.5 after:border-y-[6px] after:border-r-[8px] after:border-y-transparent after:border-r-paper',
-            blocked && 'border-l-4 border-destructive',
+            'relative border border-primary/30 bg-gradient-to-br from-card to-background px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap text-card-foreground shadow-[0_2px_10px_oklch(0_0_0/50%)] after:absolute after:top-2.5 after:-left-[13px] after:border-y-[6px] after:border-r-[8px] after:border-y-transparent after:border-r-primary/40',
+            blocked && 'border-destructive/60 from-destructive/10 after:border-r-destructive/60',
           )}
         >
           <Typewriter text={text} animate={typeIt} speedMs={14} onDone={() => id !== undefined && revealed.add(id)} />
@@ -69,7 +69,7 @@ export function ThinkingBubble({ name, avatarUrl }: { name: string; avatarUrl?: 
   return (
     <div className="flex max-w-[92%] items-start gap-2" role="status" aria-live="polite">
       {avatarUrl && <img src={avatarUrl} alt="" className="size-9 shrink-0 border border-primary object-cover" />}
-      <p className="case-sheet flex items-center gap-2 px-4 py-3 font-typewriter text-sm">
+      <p className="flex items-center gap-2 border border-primary/30 bg-gradient-to-br from-card to-background px-4 py-3 font-typewriter text-sm text-muted-foreground">
         {name} is thinking
         <span aria-hidden className="flex gap-1">
           {[0, 1, 2].map((i) => (

@@ -9,6 +9,8 @@ export interface Story {
   thumbnail_url: string
   difficulty_level: Difficulty
   reward_trophies: number
+  /** How the player's own attempt ended; null while the case is still open to them. A closed case is played once. */
+  outcome: 'solved' | 'failed' | null
 }
 
 export interface DashboardStats {

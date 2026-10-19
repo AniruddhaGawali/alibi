@@ -22,12 +22,19 @@ type fakeStore struct {
 	err     error
 }
 
-func (f *fakeStore) ListStories(context.Context) ([]Story, error) { return f.stories, f.err }
+func (f *fakeStore) ListStories(context.Context, string) ([]Story, error) { return f.stories, f.err }
 func (f *fakeStore) Stats(context.Context, string) (UserStats, error) {
 	return f.stats, errors.Join(f.trErr, f.err)
 }
 func (f *fakeStore) ActiveCase(context.Context, string) (*ActiveCase, error) { return f.active, f.err }
 func (f *fakeStore) TopPlayers(context.Context, int) ([]Player, error)       { return f.players, f.err }
+func (f *fakeStore) Usernames(_ context.Context, ids []string) (map[string]string, error) {
+	m := map[string]string{}
+	for _, p := range f.players {
+		m[p.ID] = p.Username
+	}
+	return m, f.err
+}
 
 type fakeBalance struct {
 	n   int64

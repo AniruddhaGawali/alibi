@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const caseIsClosed = `-- name: CaseIsClosed :one
+SELECT EXISTS (SELECT 1 FROM case_results WHERE user_id = $1 AND story_id = $2) AS closed
+`
+
+type CaseIsClosedParams struct {
+	UserID  string
+	StoryID string
+}
+
+func (q *Queries) CaseIsClosed(ctx context.Context, arg CaseIsClosedParams) (bool, error) {
+	row := q.db.QueryRow(ctx, caseIsClosed, arg.UserID, arg.StoryID)
+	var closed bool
+	err := row.Scan(&closed)
+	return closed, err
+}
+
 const caseIsPublished = `-- name: CaseIsPublished :one
 SELECT EXISTS (SELECT 1 FROM stories WHERE id = $1 AND is_published) AS published
 `
@@ -21,7 +37,7 @@ func (q *Queries) CaseIsPublished(ctx context.Context, id string) (bool, error) 
 }
 
 const getCaseBriefing = `-- name: GetCaseBriefing :one
-SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies
+SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, cardinality(hints)::int AS hints_total
 FROM stories
 WHERE id = $1 AND is_published
 `
@@ -33,9 +49,11 @@ type GetCaseBriefingRow struct {
 	MainPlot        string
 	DifficultyLevel string
 	RewardTrophies  int32
+	HintsTotal      int32
 }
 
 // A published case's briefing text. Unpublished cases do not exist for players.
+// hints_total only counts the hints; their text is never selected here.
 func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefingRow, error) {
 	row := q.db.QueryRow(ctx, getCaseBriefing, id)
 	var i GetCaseBriefingRow
@@ -46,7 +64,102 @@ func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefi
 		&i.MainPlot,
 		&i.DifficultyLevel,
 		&i.RewardTrophies,
+		&i.HintsTotal,
 	)
+	return i, err
+}
+
+const getCaseResult = `-- name: GetCaseResult :one
+SELECT r.correct, r.trophies_change, r.trophies_after, r.hint_penalty,
+       st.resolution, c.id AS culprit_id, c.name AS culprit_name, c.hidden_truth
+FROM case_results r
+JOIN stories st ON st.id = r.story_id
+JOIN suspects c ON c.case_id = r.story_id AND c.is_culprit
+WHERE r.user_id = $1 AND r.story_id = $2
+`
+
+type GetCaseResultParams struct {
+	UserID  string
+	StoryID string
+}
+
+type GetCaseResultRow struct {
+	Correct        bool
+	TrophiesChange int32
+	TrophiesAfter  int32
+	HintPenalty    int32
+	Resolution     string
+	CulpritID      string
+	CulpritName    string
+	HiddenTruth    string
+}
+
+// The player's settled accusation with the closing reveal (resolution, culprit).
+// Only ever read for a case the player has closed, so the solution is public to them.
+func (q *Queries) GetCaseResult(ctx context.Context, arg GetCaseResultParams) (GetCaseResultRow, error) {
+	row := q.db.QueryRow(ctx, getCaseResult, arg.UserID, arg.StoryID)
+	var i GetCaseResultRow
+	err := row.Scan(
+		&i.Correct,
+		&i.TrophiesChange,
+		&i.TrophiesAfter,
+		&i.HintPenalty,
+		&i.Resolution,
+		&i.CulpritID,
+		&i.CulpritName,
+		&i.HiddenTruth,
+	)
+	return i, err
+}
+
+const getHintState = `-- name: GetHintState :one
+SELECT l.hints_used, cardinality(s.hints)::int AS hints_total
+FROM active_case_locks l
+JOIN stories s ON s.id = l.story_id AND s.is_published
+WHERE l.user_id = $1 AND l.story_id = $2
+`
+
+type GetHintStateParams struct {
+	UserID  string
+	StoryID string
+}
+
+type GetHintStateRow struct {
+	HintsUsed  int32
+	HintsTotal int32
+}
+
+// How many hints the player has used and how many the case has. No row: not playing it.
+func (q *Queries) GetHintState(ctx context.Context, arg GetHintStateParams) (GetHintStateRow, error) {
+	row := q.db.QueryRow(ctx, getHintState, arg.UserID, arg.StoryID)
+	var i GetHintStateRow
+	err := row.Scan(&i.HintsUsed, &i.HintsTotal)
+	return i, err
+}
+
+const getUnlockedHints = `-- name: GetUnlockedHints :one
+SELECT l.hints_used, COALESCE(s.hints[1:l.hints_used], '{}')::text[] AS hints
+FROM active_case_locks l
+JOIN stories s ON s.id = l.story_id
+WHERE l.user_id = $1 AND l.story_id = $2
+`
+
+type GetUnlockedHintsParams struct {
+	UserID  string
+	StoryID string
+}
+
+type GetUnlockedHintsRow struct {
+	HintsUsed int32
+	Hints     []string
+}
+
+// The hints this player has already revealed in their current play-through of the story.
+// No row means they are not playing it.
+func (q *Queries) GetUnlockedHints(ctx context.Context, arg GetUnlockedHintsParams) (GetUnlockedHintsRow, error) {
+	row := q.db.QueryRow(ctx, getUnlockedHints, arg.UserID, arg.StoryID)
+	var i GetUnlockedHintsRow
+	err := row.Scan(&i.HintsUsed, &i.Hints)
 	return i, err
 }
 
@@ -158,6 +271,7 @@ INSERT INTO active_case_locks (user_id, case_id, story_id)
 SELECT $1::uuid, $2::uuid, s.id
 FROM stories s
 WHERE s.id = $3 AND s.is_published
+  AND NOT EXISTS (SELECT 1 FROM case_results r WHERE r.user_id = $1 AND r.story_id = s.id)
 ON CONFLICT (user_id) DO UPDATE
 SET case_id = EXCLUDED.case_id, story_id = EXCLUDED.story_id, locked_at = now()
 WHERE NOT EXISTS (
@@ -173,7 +287,7 @@ type LockUserToCaseParams struct {
 
 // Locks the user into a published story in one statement, so there is no gap
 // between checking and inserting. Zero rows means the story is not published or
-// the user is already locked into a live case. A lock left on a story that was
+// the user already closed this case, or is already locked into a live case. A lock left on a story that was
 // unpublished since is taken over.
 func (q *Queries) LockUserToCase(ctx context.Context, arg LockUserToCaseParams) (int64, error) {
 	result, err := q.db.Exec(ctx, lockUserToCase, arg.UserID, arg.CaseID, arg.StoryID)
@@ -181,4 +295,34 @@ func (q *Queries) LockUserToCase(ctx context.Context, arg LockUserToCaseParams) 
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revealNextHint = `-- name: RevealNextHint :one
+UPDATE active_case_locks AS l
+SET hints_used = l.hints_used + 1
+FROM stories s
+WHERE l.user_id = $1 AND l.story_id = $2
+  AND s.id = l.story_id AND s.is_published
+  AND l.hints_used < LEAST(3, cardinality(s.hints))
+RETURNING l.hints_used, s.hints[l.hints_used]::text AS hint
+`
+
+type RevealNextHintParams struct {
+	UserID  string
+	StoryID string
+}
+
+type RevealNextHintRow struct {
+	HintsUsed int32
+	Hint      string
+}
+
+// Reveals the next hint in one statement: the counter moves up only while hints remain,
+// so two quick clicks cannot reveal (or pay for) the same hint twice. hints_used in
+// RETURNING is the new count, which is also the 1-based position of the hint just revealed.
+func (q *Queries) RevealNextHint(ctx context.Context, arg RevealNextHintParams) (RevealNextHintRow, error) {
+	row := q.db.QueryRow(ctx, revealNextHint, arg.UserID, arg.StoryID)
+	var i RevealNextHintRow
+	err := row.Scan(&i.HintsUsed, &i.Hint)
+	return i, err
 }
