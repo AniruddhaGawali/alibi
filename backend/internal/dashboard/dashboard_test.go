@@ -22,7 +22,10 @@ type fakeStore struct {
 	err     error
 }
 
-func (f *fakeStore) ListStories(context.Context, string) ([]Story, error) { return f.stories, f.err }
+func (f *fakeStore) ListStories(context.Context) ([]Story, error) { return f.stories, f.err }
+func (f *fakeStore) Outcomes(context.Context, string) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (f *fakeStore) Stats(context.Context, string) (UserStats, error) {
 	return f.stats, errors.Join(f.trErr, f.err)
 }

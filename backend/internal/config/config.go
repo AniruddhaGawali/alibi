@@ -59,6 +59,20 @@ type Config struct {
 	SupabaseServiceRoleKey string
 	SupabaseBucket         string
 
+	// Google sign-in (optional: without GOOGLE_CLIENT_ID the Google button answers "not available").
+	GoogleClientID     string
+	GoogleClientSecret string
+	GoogleRedirectURL  string // this API's callback, registered in the Google console
+	FrontendURL        string // where the browser is sent back after Google
+
+	// Response cache (internal/httpcache).
+	CacheEnabled      bool
+	CacheUserTTL      time.Duration // server-side TTL of per-player data (profile, notes, chat, result)
+	CacheWalletTTL    time.Duration // server-side TTL of data that carries the token balance (stats, profile)
+	CacheCatalogTTL   time.Duration // server-side TTL of case content (stories, briefing, suspects)
+	CacheStaticMaxAge time.Duration // how long browsers reuse case content without asking
+	CacheResultMaxAge time.Duration // how long browsers reuse a closed case's result (it never changes)
+
 	// Auth.
 	MigrateOnStart bool // run pending goose migrations when the API starts
 	JWTSecret      string
@@ -123,7 +137,30 @@ func Load() (*Config, error) {
 	if err := checkSupabase(cfg); err != nil {
 		return nil, err
 	}
+	if err := checkGoogle(cfg); err != nil {
+		return nil, err
+	}
 	return cfg, nil
+}
+
+// checkGoogle validates the Google sign-in settings when a client id is set.
+func checkGoogle(cfg *Config) error {
+	if cfg.GoogleClientID == "" {
+		return nil
+	}
+	if cfg.GoogleClientSecret == "" {
+		return fmt.Errorf("GOOGLE_CLIENT_SECRET is required when GOOGLE_CLIENT_ID is set")
+	}
+	for name, raw := range map[string]string{"GOOGLE_REDIRECT_URL": cfg.GoogleRedirectURL, "FRONTEND_URL": cfg.FrontendURL} {
+		u, err := url.Parse(raw)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("%s must be an http(s) URL", name)
+		}
+		if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+			return fmt.Errorf("%s must use https unless it points at localhost", name)
+		}
+	}
+	return nil
 }
 
 // LoadAssets returns the config for the asset upload tool, which needs only
@@ -215,6 +252,18 @@ func load(required []string) (*Config, error) {
 		SupabaseURL:            strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
 		SupabaseBucket:         envStr("SUPABASE_BUCKET_NAME", "alibi-assets"),
+
+		GoogleClientID:     strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_ID")),
+		GoogleClientSecret: strings.TrimSpace(os.Getenv("GOOGLE_CLIENT_SECRET")),
+		GoogleRedirectURL:  envStr("GOOGLE_REDIRECT_URL", "http://localhost:8080/api/auth/google/callback"),
+		FrontendURL:        strings.TrimRight(envStr("FRONTEND_URL", "http://localhost:5173"), "/"),
+
+		CacheEnabled:      envBool("CACHE_ENABLED", true),
+		CacheUserTTL:      time.Duration(envInt("CACHE_USER_TTL_SECONDS", 300, 1, 86400)) * time.Second,
+		CacheWalletTTL:    time.Duration(envInt("CACHE_WALLET_TTL_SECONDS", 60, 1, 3600)) * time.Second,
+		CacheCatalogTTL:   time.Duration(envInt("CACHE_CATALOG_TTL_SECONDS", 3600, 1, 604800)) * time.Second,
+		CacheStaticMaxAge: time.Duration(envInt("CACHE_BROWSER_MAX_AGE_SECONDS", 3600, 0, 2592000)) * time.Second,
+		CacheResultMaxAge: time.Duration(envInt("CACHE_RESULT_MAX_AGE_SECONDS", 86400, 0, 2592000)) * time.Second,
 
 		MigrateOnStart: envBool("MIGRATE_ON_START", true),
 		JWTSecret:      os.Getenv("JWT_SECRET"),

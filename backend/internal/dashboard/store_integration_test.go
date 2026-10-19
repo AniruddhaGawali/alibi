@@ -30,7 +30,7 @@ func TestPGStore(t *testing.T) {
 	store := dashboard.NewPGStore(pool)
 
 	// Stories: only published ones, newest first, empty slice when none.
-	got, err := store.ListStories(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err := store.ListStories(ctx)
 	if err != nil || got == nil || len(got) != 0 {
 		t.Fatalf("empty stories: %v %v", got, err)
 	}
@@ -47,7 +47,7 @@ func TestPGStore(t *testing.T) {
 	s1 = insert("first", true)
 	insert("hidden", false)
 	insert("second", true)
-	got, err = store.ListStories(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err = store.ListStories(ctx)
 	if err != nil || len(got) != 2 || got[0].Title != "second" || got[1].Title != "first" {
 		t.Fatalf("stories: %+v %v", got, err)
 	}

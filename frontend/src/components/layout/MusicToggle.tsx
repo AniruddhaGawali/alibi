@@ -2,13 +2,16 @@ import { RiMusic2Fill, RiMusic2Line, RiVolumeDownLine, RiVolumeUpLine } from '@r
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Slider } from '@/components/ui/slider'
-import { useSoundStore } from '@/store/useSoundStore'
+import { useHydrated } from '@/hooks/useHydrated'
+import { DEFAULT_MUSIC_VOLUME, useSoundStore } from '@/store/useSoundStore'
 
 /** Navbar music button: opens a panel with the on/off switch and the volume slider. */
 export default function MusicToggle() {
-  const muted = useSoundStore((s) => s.musicMuted)
+  const hydrated = useHydrated() // the saved preference is read after hydration
+  const muted = useSoundStore((s) => s.musicMuted) && hydrated
   const toggle = useSoundStore((s) => s.toggleMusicMuted)
-  const volume = useSoundStore((s) => s.musicVolume)
+  const storedVolume = useSoundStore((s) => s.musicVolume)
+  const volume = hydrated ? storedVolume : DEFAULT_MUSIC_VOLUME
   const setVolume = useSoundStore((s) => s.setMusicVolume)
   const silent = muted || volume === 0
 

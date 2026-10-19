@@ -3,7 +3,7 @@ import { RiLightbulbFlashLine, RiLightbulbLine } from '@remixicon/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { useGetBriefingQuery, useRevealHintMutation } from '@/api/cases'
+import { useGetHintsQuery, useRevealHintMutation } from '@/api/cases'
 import Typewriter from '@/components/game/Typewriter'
 import { useGameStore } from '@/store/useGameStore'
 
@@ -17,14 +17,14 @@ type Step = 'confirm' | 'notes'
  * Nothing is charged now: hint n takes n trophies off the reward if the case is solved.
  */
 export default function HintWidget({ caseId }: { caseId: string }) {
-  const { data: briefing } = useGetBriefingQuery(caseId)
+  const { data: hintState } = useGetHintsQuery(caseId)
   const local = useGameStore((s) => s.hints[caseId])
   const addHint = useGameStore((s) => s.addHint)
   const [open, setOpen] = useState(false)
   const [step, setStep] = useState<Step>('confirm')
   const [justRevealed, setJustRevealed] = useState<number | null>(null)
   // The server's list is the truth after a reload; this session's list can be a step ahead of a refetch.
-  const server = briefing?.hints ?? []
+  const server = hintState?.hints ?? []
   const unlocked = local && local.length > server.length ? local : server
 
   const reveal = useRevealHintMutation({
@@ -36,10 +36,10 @@ export default function HintWidget({ caseId }: { caseId: string }) {
     onError: (e) => toast.error(e.message),
   })
 
-  const total = briefing?.hints_total ?? 0
+  const total = hintState?.hints_total ?? 0
   const next = unlocked.length + 1
   const remaining = total - unlocked.length
-  if (!briefing) return null
+  if (!hintState) return null
 
   const openModal = () => {
     setJustRevealed(null)

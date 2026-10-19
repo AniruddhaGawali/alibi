@@ -18,6 +18,7 @@ var (
 	ErrNotFound      = errors.New("user: not found")
 	ErrEmailTaken    = errors.New("user: email already registered")
 	ErrUsernameTaken = errors.New("user: username already taken")
+	ErrIdentityTaken = errors.New("user: sign-in account already linked")
 )
 
 type User struct {

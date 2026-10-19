@@ -28,6 +28,15 @@ const insertTimeout = 10 * time.Second
 type Worker struct {
 	broker Consumer
 	store  Inserter
+	// onStored runs after an exchange is stored, so cached chat history can be dropped.
+	onStored func(ctx context.Context, ev Event)
+}
+
+// OnStored sets a callback run after each exchange is stored (the response cache uses it
+// to drop the player's cached history; the write is asynchronous, so only now is it fresh).
+func (w *Worker) OnStored(f func(ctx context.Context, ev Event)) *Worker {
+	w.onStored = f
+	return w
 }
 
 func NewWorker(broker Consumer, store Inserter) *Worker {
@@ -81,6 +90,9 @@ func (w *Worker) Handle(ctx context.Context, msg models.Message) error {
 	if err := w.store.Insert(ictx, ev); err != nil {
 		utils.LogErrorCtx(ctx, "store chat event failed; will retry", "event_id", ev.EventID, "err", err)
 		return err
+	}
+	if w.onStored != nil {
+		w.onStored(ctx, ev)
 	}
 	utils.LogInfoCtx(ctx, "chat event stored", "event_id", ev.EventID, "user_id", ev.UserID, "case_id", ev.CaseID)
 	return nil

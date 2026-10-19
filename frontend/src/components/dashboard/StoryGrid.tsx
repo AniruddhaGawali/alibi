@@ -13,6 +13,7 @@ export default function StoryGrid() {
   // The stats already say which story is in progress (the stats panel shares this query).
   const { data: stats } = useGetStatsQuery()
   const activeId = stats?.active_story_id ?? null
+  const outcomes = stats?.case_outcomes ?? {}
   const navigate = useNavigate()
   // Starting a case you are already in is fine, so Start and Continue share this.
   const startCase = useStartCaseMutation({
@@ -44,15 +45,16 @@ export default function StoryGrid() {
             <StoryCard
               key={story.id}
               story={story}
+              outcome={outcomes[story.id] ?? null}
               busy={startCase.isPending}
               onOpen={(s) => {
                 play('paper')
                 // a closed case is only read, never started again
-                if (s.outcome) navigate(`/case/${s.id}`)
+                if (outcomes[s.id]) navigate(`/case/${s.id}`)
                 else startCase.mutate(s.id)
               }}
               inProgress={story.id === activeId}
-              locked={activeId !== null && story.id !== activeId && !story.outcome}
+              locked={activeId !== null && story.id !== activeId && !outcomes[story.id]}
             />
           ))}
           </div>

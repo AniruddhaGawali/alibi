@@ -102,3 +102,11 @@ type User struct {
 	AvatarPath    *string
 	Role          string
 }
+
+type UserIdentity struct {
+	Provider  string
+	Subject   string
+	UserID    string
+	Email     string
+	CreatedAt time.Time
+}

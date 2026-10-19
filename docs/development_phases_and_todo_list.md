@@ -26,7 +26,7 @@
 
 ### P1.1 Auth Backend (Go)
 - [x] Custom email/password signup with OTP verification (`signup` -> `verify-otp`, `resend-otp`); no Postgres row until the code is verified. Local PostgreSQL for now, Supabase later.
-- [ ] Google Login.
+- [x] Google Login, built on our own backend (no auth provider SDK): OAuth authorization-code flow with PKCE, `state` bound to a browser cookie and single use, ID-token `iss`/`aud`/`exp`/`nonce`/`email_verified` checks. `GET /api/auth/google/start` and `/callback` (public), then the frontend swaps a one-time Redis ticket for the session with `POST /api/auth/google/exchange` (tokens never travel in a URL). Accounts are matched by Google `sub` (`user_identities`, migration 00021), else linked by the same verified email, else created without a password (`password_hash = '!'`) with a generated username and the starting tokens; new accounts count against the per-address signup cap. Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`, `FRONTEND_URL`.
 - [x] Create the user profile record in PostgreSQL upon successful OTP verification (starting balance of 10 question tokens, 0 trophies).
 - [x] Implement JWT generation, parsing, and validation middleware (deny-by-default `auth.Middleware`, public-route allow-list).
 - [x] Initialize the Redis JWT Blacklist logic for secure logouts (`blacklist:jwt:<jti>`, access and refresh tokens, remaining-TTL expiry).
@@ -51,7 +51,7 @@
 - [ ] Create the actual alert on `dlq_depth > 0` in the log/ClickHouse tooling, and set the real Brevo credentials and verified sender in production.
 
 ### P1.2 Auth Frontend (React)
-- [x] Build the Signup form (Email/Username/Password) and a Google Login button (placeholder; backend Google login is still open).
+- [x] Build the Signup form (Email/Username/Password) and a Continue with Google button.
 - [x] Build the OTP verification screen (shadcn `InputOTP`, resend code).
 - [x] Build the Login screen for returning users.
 - [x] Build the Avatar Selection UI for the onboarding flow (1 MB client-side check, 4 placeholder defaults).
@@ -169,5 +169,8 @@
 - [x] Case-file props in `components/game/`: `Tape`, `Stamp`, `Redacted`, `Typewriter`, `RedString`; applied to the dashboard story cards (redacted + CLASSIFIED stamp on locked cases).
 - [x] Sound effects (button click, paper rustle on opening a case, typewriter keys, stamp) with a mute toggle. Synthesised with Web Audio, no files. See `docs/ui_todo.md`.
 - [x] Background music: static files in the bucket at `music/<file>.ogg` (`main.ogg` plus 4 case tracks). `MusicPlayer` (in `Layout`, so every page) loops the active case's track (`stories.music_track`, picked by the admin in the case builder; sent as `active_music_track` in `GET /api/dashboard/stats`) while the player is in a case and `main.ogg` everywhere else, crossfading on change and starting on the first click if the browser blocks autoplay. Navbar music button opens a panel with an on/off switch and a volume slider (remembered per browser).
-- [ ] Rank titles (Rookie, Detective, Inspector, Chief) shown on the leaderboard and avatar.
-- [ ] Loading screen ("Searching the archives...") and page transitions.
+- [x] Rank titles (Rookie 0, Detective 10, Inspector 30, Chief 60 trophies; `utils/rank.ts`, `RankBadge`, `RankProgress`) on the leaderboard, the navbar avatar and menu, and a progress bar under the Trophies stat. Top 3 get medals.
+- [x] Loading screen ("Searching the archives...", `LoadingScreen`, shown while the app hydrates), a gold route-progress bar, fade-in page transitions, a themed 404 ("Case not found"), locked-card shake, leaderboard row stagger, stat count-up and card hover lift; all respect reduced motion.
+- [x] Landing page at `/` (`pages/LandingPage`, `components/landing/`): big ALIBI title with a pointer-following flashlight and letter animations, typewriter tagline, Play now / Log in (or Go to dashboard when signed in), How to play, tokens/trophies/hints rules, rank ladder, the top leaderboard, a closing call to action and a footer; sections reveal on scroll. `GET /api/dashboard/leaderboard` is now public (usernames and trophies only) so visitors can see it.
+- [x] Response caching (`internal/httpcache`): one policy per route in `cmd/api/main.go`, no handler changes. Redis per-user (or shared) responses with TTL, tag-based invalidation on every write, ETag/304 revalidation, fail-open if Redis is down, and a `?force_refresh=true` bypass. Cached: profile, stats, active case, stories, briefing, suspects, hints, result, notes, chat history (the chat worker invalidates after its async Mongo insert). Browsers keep stories/briefing/suspects for `CACHE_BROWSER_MAX_AGE_SECONDS` (`Cache-Control: private, max-age`). Admin routes are not cached, they only invalidate. The per-player parts moved out of the shared responses: hints to `GET /api/cases/{id}/hints`, story outcomes to `case_outcomes` in `GET /api/dashboard/stats`.
+- [x] The landing page is prerendered at build time (`npm run build` runs `vite build`, an SSR build of `src/entry-server.tsx`, then `scripts/prerender.mjs`): `dist/index.html` holds the finished landing page, `dist/how-to-play/index.html` the rules page and `dist/404.html` the "Case not found" page (all in the `PAGES` list of the script); `dist/200.html` is the SPA shell that the host must serve as the fallback for the app routes (`/login`, `/dashboard`, ...). The browser hydrates it (`main.tsx`), browser-only state (login cookie, saved sound settings) is read after hydration (`useHydrated`, `useLoggedIn`), and scroll-reveal sections stay visible without JavaScript. No server renders anything at request time.

@@ -1,6 +1,8 @@
 import { Link } from 'react-router'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import NotFound from '@/components/game/NotFound'
+import { ApiError } from '@/api/apiClient'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useGetBriefingQuery, useGetResultQuery } from '@/api/cases'
 import { useGetStatsQuery } from '@/api/dashboard'
@@ -38,6 +40,11 @@ export default function CaseBriefing({ caseId }: { caseId: string }) {
         </div>
       </div>
     )
+  }
+
+  // An unknown or malformed case id gets the same page as an unknown URL.
+  if (error instanceof ApiError && (error.status === 404 || error.status === 400)) {
+    return <NotFound to="/dashboard" label="Back to the dashboard" />
   }
 
   if (error) {

@@ -55,8 +55,14 @@ type Briefing struct {
 	DifficultyLevel string  `json:"difficulty_level"`
 	RewardTrophies  int     `json:"reward_trophies"`
 	Scenes          []Scene `json:"scenes"`
-	// HintsTotal is how many hints the case has; HintsUsed how many this player revealed
-	// in their current play-through, and Hints their text (only those, never the rest).
+	// HintsTotal is how many hints the case has. What a player has revealed is per player
+	// and lives in HintState, so the briefing is the same for everyone and can be cached.
+	HintsTotal int `json:"hints_total"`
+}
+
+// HintState is how many hints the caller has revealed in their current play-through and
+// their text (only those, never the rest). GET /api/cases/{id}/hints.
+type HintState struct {
 	HintsTotal int      `json:"hints_total"`
 	HintsUsed  int      `json:"hints_used"`
 	Hints      []string `json:"hints"`
@@ -93,8 +99,10 @@ type Lock struct {
 // Store is the PostgreSQL side of the briefing; *PGStore implements it.
 type Store interface {
 	// Briefing returns ErrNotFound for an unknown or unpublished case.
-	// It carries the caller's own revealed hints (none when they are not playing it).
-	Briefing(ctx context.Context, userID, id string) (*Briefing, error)
+	Briefing(ctx context.Context, id string) (*Briefing, error)
+	// HintState returns the caller's revealed hints (none when they are not playing the
+	// case) and ErrNotFound for an unknown or unpublished case.
+	HintState(ctx context.Context, userID, id string) (*HintState, error)
 	// RevealHint reveals the player's next hint: ErrNotLocked when they are not in the
 	// case, ErrNoHints when none remain.
 	RevealHint(ctx context.Context, userID, storyID string) (*Hint, error)
@@ -153,7 +161,7 @@ type PGStore struct {
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{pool: pool, q: dbgen.New(pool)} }
 
-func (s *PGStore) Briefing(ctx context.Context, userID, id string) (*Briefing, error) {
+func (s *PGStore) Briefing(ctx context.Context, id string) (*Briefing, error) {
 	row, err := s.q.GetCaseBriefing(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -168,19 +176,31 @@ func (s *PGStore) Briefing(ctx context.Context, userID, id string) (*Briefing, e
 	b := &Briefing{
 		ID: row.ID, Title: row.Title, Synopsis: row.Synopsis, MainPlot: row.MainPlot,
 		DifficultyLevel: row.DifficultyLevel, RewardTrophies: int(row.RewardTrophies),
-		Scenes: make([]Scene, 0, len(scenes)), HintsTotal: int(row.HintsTotal), Hints: []string{},
+		Scenes: make([]Scene, 0, len(scenes)), HintsTotal: int(row.HintsTotal),
 	}
 	for _, sc := range scenes {
 		b.Scenes = append(b.Scenes, Scene{ID: sc.ID, SceneName: sc.SceneName, ImageURL: sc.ImageUrl, DisplayOrder: int(sc.DisplayOrder)})
 	}
+	return b, nil
+}
+
+func (s *PGStore) HintState(ctx context.Context, userID, id string) (*HintState, error) {
+	row, err := s.q.GetCaseBriefing(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	st := &HintState{HintsTotal: int(row.HintsTotal), Hints: []string{}}
 	h, err := s.q.GetUnlockedHints(ctx, dbgen.GetUnlockedHintsParams{UserID: userID, StoryID: id})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if err == nil {
-		b.HintsUsed, b.Hints = int(h.HintsUsed), h.Hints
+		st.HintsUsed, st.Hints = int(h.HintsUsed), h.Hints
 	}
-	return b, nil
+	return st, nil
 }
 
 func (s *PGStore) RevealHint(ctx context.Context, userID, storyID string) (*Hint, error) {

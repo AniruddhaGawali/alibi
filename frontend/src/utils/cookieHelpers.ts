@@ -16,6 +16,7 @@ function buildCookie(name: string, value: string, maxAge: number): string {
 }
 
 function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') return null // prerendering at build time: nobody is signed in
   for (const part of document.cookie.split('; ')) {
     const idx = part.indexOf('=')
     if (idx !== -1 && part.slice(0, idx) === name) {

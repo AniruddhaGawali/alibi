@@ -81,7 +81,7 @@ func (h *Handler) Briefing(w http.ResponseWriter, r *http.Request) {
 	if !h.allowed(w, r, uid, id) {
 		return
 	}
-	b, err := h.store.Briefing(r.Context(), uid, id)
+	b, err := h.store.Briefing(r.Context(), id)
 	if errors.Is(err, ErrNotFound) {
 		utils.ErrorResponse(w, http.StatusNotFound, "case not found", nil)
 		return
@@ -92,6 +92,26 @@ func (h *Handler) Briefing(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.SuccessResponse(w, http.StatusOK, b)
+}
+
+// HintState handles GET /api/cases/{id}/hints: the caller's own revealed hints.
+func (h *Handler) HintState(w http.ResponseWriter, r *http.Request) {
+	id, ok := caseID(w, r)
+	if !ok {
+		return
+	}
+	uid := h.userID(r.Context())
+	st, err := h.store.HintState(r.Context(), uid, id)
+	if errors.Is(err, ErrNotFound) {
+		utils.ErrorResponse(w, http.StatusNotFound, "case not found", nil)
+		return
+	}
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "load hint state failed", "user_id", uid, "case_id", id, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not load your hints", nil)
+		return
+	}
+	utils.SuccessResponse(w, http.StatusOK, st)
 }
 
 // Hints handles POST /api/cases/{id}/hints: reveals the player's next hint. Nothing is

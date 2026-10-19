@@ -23,6 +23,46 @@ export function musicUrl(track: string | null | undefined): string {
   return assetUrl(`music/${file}`)
 }
 
+/**
+ * The tracks never change, so each one is kept in the browser's Cache Storage after its first
+ * play and every later visit plays the local copy: no download, whatever caching headers the
+ * bucket sends. If a track is ever replaced, change the cache name (v1 -> v2) so browsers
+ * fetch it again.
+ */
+const MUSIC_CACHE = 'alibi-music-v1'
+const blobUrls = new Map<string, string>() // network URL -> object URL of the cached copy
+const saving = new Set<string>()
+
+/**
+ * What to play for a track: the cached copy when there is one, else the network URL, and a
+ * copy is then saved in the background for next time. Any failure (no Cache Storage, a
+ * private window, no CORS) just means playing from the network.
+ */
+async function trackSource(url: string): Promise<string> {
+  const known = blobUrls.get(url)
+  if (known) return known
+  if (typeof caches === 'undefined') return url
+  try {
+    const cache = await caches.open(MUSIC_CACHE)
+    const hit = await cache.match(url)
+    if (hit) {
+      const objectUrl = URL.createObjectURL(await hit.blob())
+      blobUrls.set(url, objectUrl)
+      return objectUrl
+    }
+    if (!saving.has(url)) {
+      saving.add(url)
+      void fetch(url, { mode: 'cors' })
+        .then((res) => (res.ok ? cache.put(url, res) : undefined))
+        .catch(() => undefined)
+        .finally(() => saving.delete(url))
+    }
+  } catch {
+    // fall back to the network
+  }
+  return url
+}
+
 const FADE_MS = 900
 const FADE_STEPS = 18
 
@@ -61,12 +101,17 @@ class MusicController {
     const old = this.current
     if (old) fade(old, 0, () => old.pause())
 
-    const next = new Audio(url)
+    const next = new Audio()
     next.loop = true
     next.preload = 'auto'
     next.volume = 0
     this.current = next
-    if (!this.muted) this.start(next)
+    // the source is looked up in the local cache first, so the track may start a moment later
+    void trackSource(url).then((src) => {
+      if (this.current !== next) return // another track was chosen meanwhile
+      next.src = src
+      if (!this.muted) this.start(next)
+    })
   }
 
   /** Set the loudness (0-1) of the playing track and of those that follow. */

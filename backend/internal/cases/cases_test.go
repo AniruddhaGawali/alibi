@@ -30,7 +30,13 @@ type fakeStore struct {
 	started  int
 }
 
-func (f *fakeStore) Briefing(_ context.Context, _, id string) (*Briefing, error) {
+func (f *fakeStore) HintState(_ context.Context, _, id string) (*HintState, error) {
+	if f.err != nil || f.briefing == nil || f.briefing.ID != id {
+		return nil, errOr(f.err)
+	}
+	return &HintState{HintsTotal: 3, HintsUsed: 1, Hints: []string{"Look at the clock."}}, nil
+}
+func (f *fakeStore) Briefing(_ context.Context, id string) (*Briefing, error) {
 	if f.err != nil || f.briefing == nil || f.briefing.ID != id {
 		return nil, errOr(f.err)
 	}

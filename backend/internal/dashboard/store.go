@@ -20,8 +20,6 @@ type Story struct {
 	ThumbnailURL    string `json:"thumbnail_url"`
 	DifficultyLevel string `json:"difficulty_level"`
 	RewardTrophies  int    `json:"reward_trophies"`
-	// Outcome is how the caller's attempt ended: "solved", "failed", or null when the case is still open to them.
-	Outcome *string `json:"outcome"`
 }
 
 // Player is one ranked user.
@@ -47,7 +45,10 @@ type ActiveCase struct {
 
 // Store is the PostgreSQL side of the dashboard; *PGStore implements it.
 type Store interface {
-	ListStories(ctx context.Context, userID string) ([]Story, error)
+	// ListStories is the published cases, the same for every player.
+	ListStories(ctx context.Context) ([]Story, error)
+	// Outcomes maps story id to "solved" or "failed" for the caller's closed cases.
+	Outcomes(ctx context.Context, userID string) (map[string]string, error)
 	// Stats returns user.ErrNotFound for an unknown user.
 	Stats(ctx context.Context, userID string) (UserStats, error)
 	// ActiveCase returns the user's locked case, or nil when they are free.
@@ -64,8 +65,8 @@ type PGStore struct{ q *dbgen.Queries }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
 
-func (s *PGStore) ListStories(ctx context.Context, userID string) ([]Story, error) {
-	rows, err := s.q.ListStories(ctx, userID)
+func (s *PGStore) ListStories(ctx context.Context) ([]Story, error) {
+	rows, err := s.q.ListStories(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -75,10 +76,22 @@ func (s *PGStore) ListStories(ctx context.Context, userID string) ([]Story, erro
 			ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, ThumbnailURL: r.ThumbnailUrl,
 			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies),
 		}
-		if r.Outcome != "" {
-			st.Outcome = &r.Outcome
-		}
 		out = append(out, st)
+	}
+	return out, nil
+}
+
+func (s *PGStore) Outcomes(ctx context.Context, userID string) (map[string]string, error) {
+	rows, err := s.q.ListUserOutcomes(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, r := range rows {
+		out[r.StoryID] = "failed"
+		if r.Correct {
+			out[r.StoryID] = "solved"
+		}
 	}
 	return out, nil
 }

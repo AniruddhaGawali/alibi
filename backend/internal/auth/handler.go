@@ -35,6 +35,12 @@ type Deps struct {
 	TrustedProxies []*net.IPNet
 	InitialTokens  func(context.Context) int // question tokens a new account starts with (the current daily allowance)
 	HashWorkers    int                       // max concurrent bcrypt operations; 0 = number of CPUs
+
+	// Google sign-in (all optional: Google.Enabled() false switches it off).
+	Google     GoogleConfig
+	OAuth      *OAuthStore
+	Identities IdentityStore
+	HTTP       *http.Client // for the Google token call; nil = a client with a 10 s timeout
 }
 
 type Handler struct {

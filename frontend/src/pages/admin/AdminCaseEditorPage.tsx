@@ -1,4 +1,6 @@
 import { Link, useParams } from 'react-router'
+import NotFound from '@/components/game/NotFound'
+import { ApiError } from '@/api/apiClient'
 import { RiArrowLeftLine } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -10,6 +12,10 @@ export default function AdminCaseEditorPage() {
   const { id } = useParams()
   const isNew = !id || id === 'new'
   const { data, isPending, error, refetch, dataUpdatedAt } = useGetAdminCaseQuery(id ?? '', { enabled: !isNew })
+
+  if (!isNew && error instanceof ApiError && (error.status === 404 || error.status === 400)) {
+    return <NotFound to="/admin/dashboard" label="Back to all cases" />
+  }
 
   return (
     <div className="space-y-6">

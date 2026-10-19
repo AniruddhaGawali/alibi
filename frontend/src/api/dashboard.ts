@@ -9,8 +9,6 @@ export interface Story {
   thumbnail_url: string
   difficulty_level: Difficulty
   reward_trophies: number
-  /** How the player's own attempt ended; null while the case is still open to them. A closed case is played once. */
-  outcome: 'solved' | 'failed' | null
 }
 
 export interface DashboardStats {
@@ -23,6 +21,8 @@ export interface DashboardStats {
   active_story_id: string | null
   /** Music track key of the case in progress ('' = main theme), null when free. */
   active_music_track: string | null
+  /** How each of the player's closed cases ended, by story id (a closed case is played once). */
+  case_outcomes: Record<string, 'solved' | 'failed'>
 }
 
 export interface LeaderboardEntry {
@@ -43,7 +43,7 @@ export const dashboardApi = createApi({
     getStories: build.query<Story[]>({
       query: () => '/api/dashboard/stories',
       providesTags: ['Stories'],
-      staleTime: 60,
+      staleTime: 300, // the list is the same for everyone and rarely changes; outcomes come with the stats
     }),
     getStats: build.query<DashboardStats>({
       query: () => '/api/dashboard/stats',

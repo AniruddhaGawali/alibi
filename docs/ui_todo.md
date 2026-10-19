@@ -16,14 +16,14 @@ Tick items off here when done. Phase work stays in `development_phases_and_todo_
 - [ ] Polaroid / paper-clipped photo style for thumbnails
 - [x] CSS textures ready in `index.css`: `.texture-paper`, `.texture-cork`, `.texture-wood`
 - [ ] Apply the textures: paper on testimonies / case files, cork behind the story grid and suspect board, wood on the navbar
-- [ ] Locked-card shake animation when clicked
-- [ ] Loading screen ("Searching the archives...") with a spinning magnifier, replacing skeletons on first load
-- [ ] Page transitions (fade / iris wipe)
+- [x] Locked-card shake animation when clicked
+- [x] Loading screen ("Searching the archives...") with a spinning magnifier, replacing skeletons on first load
+- [x] Page transitions (fade / iris wipe)
 - [ ] Hover tooltip and sound variety for Start / Continue
-- [ ] Rank titles (Rookie, Detective, Inspector, Chief) on the leaderboard and avatar
+- [x] Rank titles (Rookie, Detective, Inspector, Chief) on the leaderboard and avatar
 - [ ] Profile card with a `frame` (avatar, username, trophies, solved, rank)
 - [ ] Navbar restyle as a detective's desk bar (logo mark, badge-style wallet)
-- [ ] Themed 404 page ("Case not found")
+- [x] Themed 404 page ("Case not found")
 - [ ] Themed empty states (no cases, no leaderboard entries)
 - [ ] Mobile pass: cursor fallback on touch, tap targets, stats row, red string hidden
 
