@@ -28,8 +28,15 @@ type User struct {
 	AvatarDefault *int    // 1..4 when a default avatar is chosen
 	AvatarURL     *string // public URL of the custom image in object storage
 	Trophies      int
+	Role          string // RoleUser or RoleAdmin
 	CreatedAt     time.Time
 }
+
+// Roles (users_role_valid). Admins are made by hand in SQL; there is no API for it.
+const (
+	RoleUser  = "user"
+	RoleAdmin = "admin"
+)
 
 // Store is the persistence the auth and profile handlers need.
 type Store interface {
@@ -64,7 +71,7 @@ var ErrInsufficientTokens = errors.New("wallet: insufficient tokens")
 func fromRow(r dbgen.User) *User {
 	u := &User{
 		ID: r.ID, Username: r.Username, Email: r.Email, PasswordHash: r.PasswordHash,
-		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), CreatedAt: r.CreatedAt,
+		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), Role: r.Role, CreatedAt: r.CreatedAt,
 	}
 	if r.AvatarDefault != nil {
 		n := int(*r.AvatarDefault)

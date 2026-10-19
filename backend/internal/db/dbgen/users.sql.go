@@ -36,7 +36,7 @@ func (q *Queries) CheckAvailability(ctx context.Context, arg CheckAvailabilityPa
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, token_balance)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, is_admin
+RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role
 `
 
 type CreateUserParams struct {
@@ -66,13 +66,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CasesSolved,
 		&i.AvatarUrl,
 		&i.AvatarPath,
-		&i.IsAdmin,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, is_admin FROM users WHERE lower(email) = lower($1)
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -90,13 +90,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CasesSolved,
 		&i.AvatarUrl,
 		&i.AvatarPath,
-		&i.IsAdmin,
+		&i.Role,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, is_admin FROM users WHERE id = $1
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -114,7 +114,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.CasesSolved,
 		&i.AvatarUrl,
 		&i.AvatarPath,
-		&i.IsAdmin,
+		&i.Role,
 	)
 	return i, err
 }

@@ -5,6 +5,7 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"backend/pkg/utils"
@@ -26,8 +27,10 @@ const (
 	// doneTTL outlives the day a finished reset is recorded for, so a second replica
 	// (or a restarted one whose clock is slightly off) never runs the same day twice.
 	doneTTL = 48 * time.Hour
-	// catchUpEvery is how often the API checks that today's reset has happened.
-	catchUpEvery = 10 * time.Minute
+	// checkEvery is how often the API checks whether today's reset is due. The
+	// schedule is edited from the admin panel, so the job re-reads it every check
+	// instead of registering a fixed cron entry; the reset runs at most this late.
+	checkEvery = time.Minute
 	// attempts is how many times the Postgres reset is tried before giving up.
 	attempts = 3
 	// secondSweep clears the cache again shortly after the reset, in case a
@@ -35,6 +38,13 @@ const (
 	// the first sweep.
 	secondSweep = 5 * time.Second
 )
+
+// Schedule is the reset's configuration: Tokens at Hour:Minute in Loc.
+type Schedule struct {
+	Tokens       int
+	Hour, Minute int
+	Loc          *time.Location
+}
 
 // TokenReset resets every user's question tokens to Tokens (P4.2), once a day.
 // Unused tokens never roll over: the balance is set, not topped up, so a player
@@ -45,8 +55,25 @@ type TokenReset struct {
 	Redis  *redis.Client
 	Loc    *time.Location
 	Sched  cron.Schedule // when the reset is due; nil: CatchUp does nothing
-	now    func() time.Time
-	sleep  func(time.Duration)
+	// Load, when set, is read before every CatchUp check and replaces Tokens, Loc
+	// and Sched, so an edit in the admin panel applies from the next check.
+	Load  func(context.Context) (Schedule, error)
+	mu    sync.Mutex // one check at a time; Load rewrites the fields above
+	now   func() time.Time
+	sleep func(time.Duration)
+}
+
+// apply sets the job's fields from s.
+func (j *TokenReset) apply(s Schedule) error {
+	if s.Loc == nil {
+		return fmt.Errorf("token reset: no timezone")
+	}
+	sched, err := cron.ParseStandard(fmt.Sprintf("%d %d * * *", s.Minute, s.Hour))
+	if err != nil {
+		return fmt.Errorf("token reset time %02d:%02d: %w", s.Hour, s.Minute, err)
+	}
+	j.Tokens, j.Loc, j.Sched = int64(s.Tokens), s.Loc, sched
+	return nil
 }
 
 // Run is the cron job. Every API replica schedules it, so Redis keys by the
@@ -138,11 +165,27 @@ func (j *TokenReset) due(now time.Time) bool {
 	return !first.After(local) && first.Before(midnight.AddDate(0, 0, 1))
 }
 
-// CatchUp runs the reset when it is due today but has not happened: the API was
-// down or asleep at the cron minute, or an earlier run failed. robfig/cron does
-// not replay missed runs, so this is what makes the reset self-healing. It runs
-// at startup and every catchUpEvery.
+// CatchUp runs the reset when today's reset time has passed and today is not done
+// yet. It runs at startup and every checkEvery, so it is both the schedule and what
+// makes the reset self-healing: a run missed while the API was down, or one that
+// failed, happens at the next check.
 func (j *TokenReset) CatchUp() {
+	if !j.mu.TryLock() {
+		return // the previous check is still running
+	}
+	defer j.mu.Unlock()
+	if j.Load != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s, err := j.Load(ctx)
+		cancel()
+		if err == nil {
+			err = j.apply(s)
+		}
+		if err != nil {
+			utils.LogError("token reset: could not load the schedule; skipping this check", "err", err)
+			return
+		}
+	}
 	now := time.Now
 	if j.now != nil {
 		now = j.now
@@ -153,25 +196,23 @@ func (j *TokenReset) CatchUp() {
 	j.Run() // does nothing when today is already done
 }
 
-// StartTokenReset schedules the daily reset with a standard 5-field cron spec
-// (e.g. "0 0 * * *" for midnight) read in the IANA zone tz, and starts the
-// scheduler on its own goroutine. Stop the returned scheduler on shutdown.
-func StartTokenReset(spec, tz string, tokens int, w Resetter, rdb *redis.Client) (*cron.Cron, error) {
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		return nil, fmt.Errorf("TOKEN_RESET_TIMEZONE: %w", err)
+// StartTokenReset checks every checkEvery whether the daily reset is due, reading
+// the schedule from load each time (the admin panel can change it), and starts
+// the scheduler on its own goroutine. Stop the returned scheduler on shutdown.
+func StartTokenReset(load func(context.Context) (Schedule, error), w Resetter, rdb *redis.Client) (*cron.Cron, error) {
+	job := &TokenReset{Wallet: w, Redis: rdb, Load: load}
+	s, err := load(context.Background())
+	if err == nil {
+		err = job.apply(s)
 	}
-	sched, err := cron.ParseStandard(spec)
 	if err != nil {
-		return nil, fmt.Errorf("TOKEN_RESET_CRON %q: %w", spec, err)
+		return nil, err
 	}
-	c := cron.New(cron.WithLocation(loc))
-	job := &TokenReset{Tokens: int64(tokens), Wallet: w, Redis: rdb, Loc: loc, Sched: sched}
-	c.Schedule(sched, job)
-	c.Schedule(cron.Every(catchUpEvery), cron.FuncJob(job.CatchUp)) // heals a missed or failed run
+	c := cron.New()
+	c.Schedule(cron.Every(checkEvery), cron.FuncJob(job.CatchUp))
 	c.Start()
-	go job.CatchUp() // the API may have been down at the cron minute
-	utils.LogInfo("token reset scheduled", "cron", spec, "timezone", tz, "tokens", tokens,
-		"next_run", sched.Next(time.Now().In(loc)))
+	go job.CatchUp() // the API may have been down at the reset time
+	utils.LogInfo("token reset scheduled", "at", fmt.Sprintf("%02d:%02d", s.Hour, s.Minute), "timezone", s.Loc.String(),
+		"tokens", s.Tokens, "next_run", job.Sched.Next(time.Now().In(s.Loc)))
 	return c, nil
 }

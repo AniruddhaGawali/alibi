@@ -73,6 +73,11 @@ export default function UserMenu() {
           </div>
         </div>
         <DropdownMenuSeparator />
+        {user.role === 'admin' && (
+          <DropdownMenuItem asChild>
+            <Link to="/admin/dashboard">Admin panel</Link>
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem asChild>
           <Link to="/onboarding/avatar">Change avatar</Link>
         </DropdownMenuItem>

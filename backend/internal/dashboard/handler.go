@@ -40,6 +40,9 @@ type statsResp struct {
 	CasesSolved     int64   `json:"cases_solved"`
 	ActiveCaseTitle *string `json:"active_case_title"` // null when no case is in progress
 	ActiveStoryID   *string `json:"active_story_id"`   // the story being played, null when none
+	// ActiveMusic is the music track of the case in progress ("" = main theme), null
+	// when none: the game plays it on every page while the player is in the case.
+	ActiveMusic *string `json:"active_music_track"`
 }
 
 type rankedPlayer struct {
@@ -91,6 +94,7 @@ func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
 	if active != nil {
 		resp.ActiveCaseTitle = &active.Title
 		resp.ActiveStoryID = &active.StoryID
+		resp.ActiveMusic = &active.Music
 	}
 	utils.SuccessResponse(w, http.StatusOK, resp)
 }

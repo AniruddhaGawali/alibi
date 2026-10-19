@@ -33,8 +33,8 @@ type Deps struct {
 	Mail           emailqueue.Publisher // outbound email queue
 	Coins          CoinCache
 	TrustedProxies []*net.IPNet
-	InitialTokens  int // question tokens a new account starts with
-	HashWorkers    int // max concurrent bcrypt operations; 0 = number of CPUs
+	InitialTokens  func(context.Context) int // question tokens a new account starts with (the current daily allowance)
+	HashWorkers    int                       // max concurrent bcrypt operations; 0 = number of CPUs
 }
 
 type Handler struct {
@@ -110,6 +110,7 @@ type userInfo struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
 	Email    string `json:"email"`
+	Role     string `json:"role"` // "admin" goes to the admin panel after login
 }
 
 type tokenResp struct {
@@ -132,12 +133,12 @@ var dummyHash, _ = bcrypt.GenerateFromPassword([]byte("alibi-dummy-password"), b
 func normalizeEmail(e string) string { return strings.ToLower(strings.TrimSpace(e)) }
 
 // issuePair signs a fresh access/refresh pair.
-func (h *Handler) issuePair(userID, email string) (*tokenResp, error) {
-	access, claims, err := h.Tokens.Issue(userID, email, Access)
+func (h *Handler) issuePair(userID, email, role string) (*tokenResp, error) {
+	access, claims, err := h.Tokens.Issue(userID, email, role, Access)
 	if err != nil {
 		return nil, err
 	}
-	refresh, _, err := h.Tokens.Issue(userID, email, Refresh)
+	refresh, _, err := h.Tokens.Issue(userID, email, role, Refresh)
 	if err != nil {
 		return nil, err
 	}
@@ -150,13 +151,13 @@ func (h *Handler) issuePair(userID, email string) (*tokenResp, error) {
 
 // respondTokens issues a pair and writes it, or a generic 500.
 func (h *Handler) respondTokens(w http.ResponseWriter, r *http.Request, status int, u *user.User) {
-	resp, err := h.issuePair(u.ID, u.Email)
+	resp, err := h.issuePair(u.ID, u.Email, u.Role)
 	if err != nil {
 		utils.LogErrorCtx(r.Context(), "issue tokens failed", "user_id", u.ID, "err", err)
 		utils.ErrorResponse(w, http.StatusInternalServerError, "could not create session", nil)
 		return
 	}
-	resp.User = &userInfo{ID: u.ID, Username: u.Username, Email: u.Email}
+	resp.User = &userInfo{ID: u.ID, Username: u.Username, Email: u.Email, Role: u.Role}
 	utils.SuccessResponse(w, status, resp)
 }
 
@@ -413,7 +414,8 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		tooMany(w, wait)
 		return
 	}
-	u, err := h.Users.Create(ctx, sess.Username, addr, sess.HashedPassword, h.InitialTokens)
+	initial := h.InitialTokens(ctx)
+	u, err := h.Users.Create(ctx, sess.Username, addr, sess.HashedPassword, initial)
 	switch {
 	case errors.Is(err, user.ErrEmailTaken), errors.Is(err, user.ErrUsernameTaken):
 		// Someone else registered it while this signup was pending.
@@ -432,9 +434,9 @@ func (h *Handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	if err := h.OTP.Delete(context.WithoutCancel(ctx), addr); err != nil {
 		utils.LogErrorCtx(ctx, "delete signup session failed", "user_id", u.ID, "err", err)
 	}
-	h.Coins.Cache(ctx, u.ID, int64(h.InitialTokens))
+	h.Coins.Cache(ctx, u.ID, int64(initial))
 
-	utils.LogInfoCtx(ctx, "user signed up", "user_id", u.ID, "initial_tokens", h.InitialTokens)
+	utils.LogInfoCtx(ctx, "user signed up", "user_id", u.ID, "initial_tokens", initial)
 	h.respondTokens(w, r, http.StatusCreated, u)
 }
 

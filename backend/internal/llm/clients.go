@@ -19,6 +19,7 @@ type Clients struct {
 	Ollama     *api.Client
 	OpenRouter *openrouter.OpenRouter // nil when no API key is configured
 	timeout    time.Duration          // per interrogation call
+	catalog    modelCatalog           // cached ListTextModels result
 }
 
 // NewClients builds both clients. ollamaHost is e.g. http://localhost:11434.

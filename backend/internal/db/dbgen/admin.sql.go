@@ -10,13 +10,102 @@ import (
 	"time"
 )
 
+const adminCaseExists = `-- name: AdminCaseExists :one
+SELECT EXISTS (SELECT 1 FROM stories WHERE id = $1) AS found
+`
+
+func (q *Queries) AdminCaseExists(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, adminCaseExists, id)
+	var found bool
+	err := row.Scan(&found)
+	return found, err
+}
+
+const adminCaseImageURLs = `-- name: AdminCaseImageURLs :many
+SELECT thumbnail_url AS url FROM stories WHERE stories.id = $1 AND thumbnail_url <> ''
+UNION ALL
+SELECT avatar_url FROM suspects WHERE suspects.case_id = $1 AND avatar_url <> ''
+UNION ALL
+SELECT image_url FROM case_scenes WHERE case_scenes.case_id = $1 AND image_url <> ''
+`
+
+// Every image a case points at, so they can be removed from storage after a delete.
+func (q *Queries) AdminCaseImageURLs(ctx context.Context, id string) ([]string, error) {
+	rows, err := q.db.Query(ctx, adminCaseImageURLs, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var url string
+		if err := rows.Scan(&url); err != nil {
+			return nil, err
+		}
+		items = append(items, url)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminCaseInUse = `-- name: AdminCaseInUse :one
+SELECT (EXISTS (SELECT 1 FROM active_case_locks l WHERE l.story_id = $1::uuid)
+    OR EXISTS (SELECT 1 FROM case_results r WHERE r.story_id = $1::uuid))::boolean AS in_use
+`
+
+// A case someone is playing or has played cannot be deleted (unpublish it instead):
+// deleting it would erase those players' results.
+func (q *Queries) AdminCaseInUse(ctx context.Context, id string) (bool, error) {
+	row := q.db.QueryRow(ctx, adminCaseInUse, id)
+	var in_use bool
+	err := row.Scan(&in_use)
+	return in_use, err
+}
+
+const adminCaseReadiness = `-- name: AdminCaseReadiness :one
+SELECT (SELECT count(*) FROM suspects p WHERE p.case_id = $1::uuid)::int                AS suspect_count,
+       (SELECT count(*) FROM suspects p WHERE p.case_id = $1::uuid AND p.is_culprit)::int AS culprit_count
+`
+
+type AdminCaseReadinessRow struct {
+	SuspectCount int32
+	CulpritCount int32
+}
+
+// What publishing needs: at least two suspects and exactly one culprit.
+func (q *Queries) AdminCaseReadiness(ctx context.Context, id string) (AdminCaseReadinessRow, error) {
+	row := q.db.QueryRow(ctx, adminCaseReadiness, id)
+	var i AdminCaseReadinessRow
+	err := row.Scan(&i.SuspectCount, &i.CulpritCount)
+	return i, err
+}
+
+const adminClearCulprit = `-- name: AdminClearCulprit :exec
+UPDATE suspects SET is_culprit = false
+WHERE case_id = $1 AND is_culprit AND id <> COALESCE($2::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+`
+
+type AdminClearCulpritParams struct {
+	CaseID string
+	KeepID *string
+}
+
+// Run before marking a suspect as the culprit, in the same transaction: a case has
+// one culprit (suspects_one_culprit_idx), so the flag moves instead of conflicting.
+func (q *Queries) AdminClearCulprit(ctx context.Context, arg AdminClearCulpritParams) error {
+	_, err := q.db.Exec(ctx, adminClearCulprit, arg.CaseID, arg.KeepID)
+	return err
+}
+
 const adminCreateCase = `-- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9::text[], $10, $11)
+        $6, $7, $8, $9::text[], $10, $11, $12)
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, created_at
+          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at
 `
 
 type AdminCreateCaseParams struct {
@@ -31,6 +120,7 @@ type AdminCreateCaseParams struct {
 	Hints           []string
 	IsPublished     bool
 	LlmModel        string
+	MusicTrack      string
 }
 
 type AdminCreateCaseRow struct {
@@ -46,6 +136,7 @@ type AdminCreateCaseRow struct {
 	Hints           []string
 	IsPublished     bool
 	LlmModel        string
+	MusicTrack      string
 	CreatedAt       time.Time
 }
 
@@ -62,6 +153,7 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		arg.Hints,
 		arg.IsPublished,
 		arg.LlmModel,
+		arg.MusicTrack,
 	)
 	var i AdminCreateCaseRow
 	err := row.Scan(
@@ -77,27 +169,446 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		&i.Hints,
 		&i.IsPublished,
 		&i.LlmModel,
+		&i.MusicTrack,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
+const adminCreateScene = `-- name: AdminCreateScene :one
+INSERT INTO case_scenes (case_id, scene_name, image_url, display_order)
+VALUES ($1, $2, $3, $4)
+RETURNING id, case_id, scene_name, image_url, display_order
+`
+
+type AdminCreateSceneParams struct {
+	CaseID       string
+	SceneName    string
+	ImageUrl     string
+	DisplayOrder int32
+}
+
+func (q *Queries) AdminCreateScene(ctx context.Context, arg AdminCreateSceneParams) (CaseScene, error) {
+	row := q.db.QueryRow(ctx, adminCreateScene,
+		arg.CaseID,
+		arg.SceneName,
+		arg.ImageUrl,
+		arg.DisplayOrder,
+	)
+	var i CaseScene
+	err := row.Scan(
+		&i.ID,
+		&i.CaseID,
+		&i.SceneName,
+		&i.ImageUrl,
+		&i.DisplayOrder,
+	)
+	return i, err
+}
+
+const adminCreateSuspect = `-- name: AdminCreateSuspect :one
+INSERT INTO suspects (case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
+                      relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12, $13::text[])
+RETURNING id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
+          relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords
+`
+
+type AdminCreateSuspectParams struct {
+	CaseID               string
+	Name                 string
+	Role                 string
+	AvatarUrl            string
+	InitialTestimony     string
+	IsCulprit            bool
+	DisplayOrder         int32
+	RelationshipToVictim string
+	Persona              string
+	PublicAlibi          string
+	HiddenTruth          string
+	ConfessionTriggers   string
+	ConfessionKeywords   []string
+}
+
+func (q *Queries) AdminCreateSuspect(ctx context.Context, arg AdminCreateSuspectParams) (Suspect, error) {
+	row := q.db.QueryRow(ctx, adminCreateSuspect,
+		arg.CaseID,
+		arg.Name,
+		arg.Role,
+		arg.AvatarUrl,
+		arg.InitialTestimony,
+		arg.IsCulprit,
+		arg.DisplayOrder,
+		arg.RelationshipToVictim,
+		arg.Persona,
+		arg.PublicAlibi,
+		arg.HiddenTruth,
+		arg.ConfessionTriggers,
+		arg.ConfessionKeywords,
+	)
+	var i Suspect
+	err := row.Scan(
+		&i.ID,
+		&i.CaseID,
+		&i.Name,
+		&i.Role,
+		&i.AvatarUrl,
+		&i.InitialTestimony,
+		&i.IsCulprit,
+		&i.DisplayOrder,
+		&i.RelationshipToVictim,
+		&i.Persona,
+		&i.PublicAlibi,
+		&i.HiddenTruth,
+		&i.ConfessionTriggers,
+		&i.ConfessionKeywords,
+	)
+	return i, err
+}
+
+const adminDeleteCase = `-- name: AdminDeleteCase :execrows
+DELETE FROM stories WHERE id = $1
+`
+
+// Suspects, scenes and notes go with it (ON DELETE CASCADE). An active lock still
+// points at the story without a cascade, so a player who starts the case in the
+// meantime makes this fail with a foreign key violation instead of losing their game.
+func (q *Queries) AdminDeleteCase(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, adminDeleteCase, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const adminDeleteScene = `-- name: AdminDeleteScene :one
+DELETE FROM case_scenes WHERE id = $1 AND case_id = $2
+RETURNING image_url
+`
+
+type AdminDeleteSceneParams struct {
+	ID     string
+	CaseID string
+}
+
+func (q *Queries) AdminDeleteScene(ctx context.Context, arg AdminDeleteSceneParams) (string, error) {
+	row := q.db.QueryRow(ctx, adminDeleteScene, arg.ID, arg.CaseID)
+	var image_url string
+	err := row.Scan(&image_url)
+	return image_url, err
+}
+
+const adminDeleteSuspect = `-- name: AdminDeleteSuspect :one
+DELETE FROM suspects WHERE id = $1 AND case_id = $2
+RETURNING avatar_url
+`
+
+type AdminDeleteSuspectParams struct {
+	ID     string
+	CaseID string
+}
+
+func (q *Queries) AdminDeleteSuspect(ctx context.Context, arg AdminDeleteSuspectParams) (string, error) {
+	row := q.db.QueryRow(ctx, adminDeleteSuspect, arg.ID, arg.CaseID)
+	var avatar_url string
+	err := row.Scan(&avatar_url)
+	return avatar_url, err
+}
+
+const adminGetCase = `-- name: AdminGetCase :one
+SELECT id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
+       reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at
+FROM stories
+WHERE id = $1
+`
+
+type AdminGetCaseRow struct {
+	ID              string
+	Title           string
+	Synopsis        string
+	MainPlot        string
+	ThumbnailUrl    string
+	DifficultyLevel string
+	RewardTrophies  int32
+	PenaltyTrophies int32
+	Resolution      string
+	Hints           []string
+	IsPublished     bool
+	LlmModel        string
+	MusicTrack      string
+	CreatedAt       time.Time
+}
+
+func (q *Queries) AdminGetCase(ctx context.Context, id string) (AdminGetCaseRow, error) {
+	row := q.db.QueryRow(ctx, adminGetCase, id)
+	var i AdminGetCaseRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.Synopsis,
+		&i.MainPlot,
+		&i.ThumbnailUrl,
+		&i.DifficultyLevel,
+		&i.RewardTrophies,
+		&i.PenaltyTrophies,
+		&i.Resolution,
+		&i.Hints,
+		&i.IsPublished,
+		&i.LlmModel,
+		&i.MusicTrack,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const adminGetUser = `-- name: AdminGetUser :one
+SELECT id, username, email, role, token_balance, trophies, created_at
+FROM users
+WHERE id = $1
+`
+
+type AdminGetUserRow struct {
+	ID           string
+	Username     string
+	Email        string
+	Role         string
+	TokenBalance int64
+	Trophies     int32
+	CreatedAt    time.Time
+}
+
+func (q *Queries) AdminGetUser(ctx context.Context, id string) (AdminGetUserRow, error) {
+	row := q.db.QueryRow(ctx, adminGetUser, id)
+	var i AdminGetUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.Role,
+		&i.TokenBalance,
+		&i.Trophies,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const adminListCases = `-- name: AdminListCases :many
+SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
+       s.penalty_trophies, s.is_published, s.llm_model, s.music_track, s.created_at,
+       (SELECT count(*) FROM suspects p WHERE p.case_id = s.id)::int                  AS suspect_count,
+       (SELECT count(*) FROM suspects p WHERE p.case_id = s.id AND p.is_culprit)::int AS culprit_count,
+       (SELECT count(*) FROM case_results r WHERE r.story_id = s.id)::int             AS plays
+FROM stories s
+ORDER BY s.created_at DESC, s.id
+`
+
+type AdminListCasesRow struct {
+	ID              string
+	Title           string
+	Synopsis        string
+	ThumbnailUrl    string
+	DifficultyLevel string
+	RewardTrophies  int32
+	PenaltyTrophies int32
+	IsPublished     bool
+	LlmModel        string
+	MusicTrack      string
+	CreatedAt       time.Time
+	SuspectCount    int32
+	CulpritCount    int32
+	Plays           int32
+}
+
+// Every case, drafts included, newest first, with what the list page needs to show
+// whether it is ready to publish.
+func (q *Queries) AdminListCases(ctx context.Context) ([]AdminListCasesRow, error) {
+	rows, err := q.db.Query(ctx, adminListCases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminListCasesRow{}
+	for rows.Next() {
+		var i AdminListCasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Synopsis,
+			&i.ThumbnailUrl,
+			&i.DifficultyLevel,
+			&i.RewardTrophies,
+			&i.PenaltyTrophies,
+			&i.IsPublished,
+			&i.LlmModel,
+			&i.MusicTrack,
+			&i.CreatedAt,
+			&i.SuspectCount,
+			&i.CulpritCount,
+			&i.Plays,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListScenes = `-- name: AdminListScenes :many
+SELECT id, case_id, scene_name, image_url, display_order
+FROM case_scenes
+WHERE case_id = $1
+ORDER BY display_order, id
+`
+
+func (q *Queries) AdminListScenes(ctx context.Context, caseID string) ([]CaseScene, error) {
+	rows, err := q.db.Query(ctx, adminListScenes, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CaseScene{}
+	for rows.Next() {
+		var i CaseScene
+		if err := rows.Scan(
+			&i.ID,
+			&i.CaseID,
+			&i.SceneName,
+			&i.ImageUrl,
+			&i.DisplayOrder,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminListSuspects = `-- name: AdminListSuspects :many
+SELECT id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
+       relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords
+FROM suspects
+WHERE case_id = $1
+ORDER BY display_order, name
+`
+
+// Admins see everything, secrets included. Never use this for a player response.
+func (q *Queries) AdminListSuspects(ctx context.Context, caseID string) ([]Suspect, error) {
+	rows, err := q.db.Query(ctx, adminListSuspects, caseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Suspect{}
+	for rows.Next() {
+		var i Suspect
+		if err := rows.Scan(
+			&i.ID,
+			&i.CaseID,
+			&i.Name,
+			&i.Role,
+			&i.AvatarUrl,
+			&i.InitialTestimony,
+			&i.IsCulprit,
+			&i.DisplayOrder,
+			&i.RelationshipToVictim,
+			&i.Persona,
+			&i.PublicAlibi,
+			&i.HiddenTruth,
+			&i.ConfessionTriggers,
+			&i.ConfessionKeywords,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const adminSearchUsers = `-- name: AdminSearchUsers :many
+SELECT id, username, email, role, token_balance, trophies, created_at
+FROM users
+WHERE $1::text = ''
+   OR username ILIKE '%' || $1::text || '%'
+   OR email ILIKE '%' || $1::text || '%'
+ORDER BY (lower(username) = lower($1::text)) DESC, created_at DESC
+LIMIT $2::int
+`
+
+type AdminSearchUsersParams struct {
+	Q   string
+	Lim int32
+}
+
+type AdminSearchUsersRow struct {
+	ID           string
+	Username     string
+	Email        string
+	Role         string
+	TokenBalance int64
+	Trophies     int32
+	CreatedAt    time.Time
+}
+
+// Players for the admin panel, by username or email (@q already has LIKE wildcards
+// escaped by the caller). An empty @q lists the newest accounts.
+func (q *Queries) AdminSearchUsers(ctx context.Context, arg AdminSearchUsersParams) ([]AdminSearchUsersRow, error) {
+	rows, err := q.db.Query(ctx, adminSearchUsers, arg.Q, arg.Lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AdminSearchUsersRow{}
+	for rows.Next() {
+		var i AdminSearchUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Username,
+			&i.Email,
+			&i.Role,
+			&i.TokenBalance,
+			&i.Trophies,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const adminUpdateCase = `-- name: AdminUpdateCase :one
-UPDATE stories SET
-    title            = COALESCE($1::text, title),
-    synopsis         = COALESCE($2::text, synopsis),
-    main_plot        = COALESCE($3::text, main_plot),
-    thumbnail_url    = COALESCE($4::text, thumbnail_url),
-    difficulty_level = COALESCE($5::text, difficulty_level),
-    reward_trophies  = COALESCE($6::int, reward_trophies),
-    penalty_trophies = COALESCE($7::int, penalty_trophies),
-    resolution       = COALESCE($8::text, resolution),
-    hints            = COALESCE($9::text[], hints),
-    is_published     = COALESCE($10::boolean, is_published),
-    llm_model        = COALESCE($11::text, llm_model)
-WHERE id = $12
-RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, created_at
+WITH old AS (SELECT o.id, o.thumbnail_url FROM stories o WHERE o.id = $13 FOR UPDATE)
+UPDATE stories s SET
+    title            = COALESCE($1::text, s.title),
+    synopsis         = COALESCE($2::text, s.synopsis),
+    main_plot        = COALESCE($3::text, s.main_plot),
+    thumbnail_url    = COALESCE($4::text, s.thumbnail_url),
+    difficulty_level = COALESCE($5::text, s.difficulty_level),
+    reward_trophies  = COALESCE($6::int, s.reward_trophies),
+    penalty_trophies = COALESCE($7::int, s.penalty_trophies),
+    resolution       = COALESCE($8::text, s.resolution),
+    hints            = COALESCE($9::text[], s.hints),
+    is_published     = COALESCE($10::boolean, s.is_published),
+    llm_model        = COALESCE($11::text, s.llm_model),
+    music_track      = COALESCE($12::text, s.music_track)
+FROM old
+WHERE s.id = old.id
+RETURNING s.id, s.title, s.synopsis, s.main_plot, s.thumbnail_url, s.difficulty_level,
+          s.reward_trophies, s.penalty_trophies, s.resolution, s.hints, s.is_published, s.llm_model, s.music_track, s.created_at,
+          old.thumbnail_url AS old_thumbnail_url
 `
 
 type AdminUpdateCaseParams struct {
@@ -112,6 +623,7 @@ type AdminUpdateCaseParams struct {
 	Hints           []string
 	IsPublished     *bool
 	LlmModel        *string
+	MusicTrack      *string
 	ID              string
 }
 
@@ -128,10 +640,13 @@ type AdminUpdateCaseRow struct {
 	Hints           []string
 	IsPublished     bool
 	LlmModel        string
+	MusicTrack      string
 	CreatedAt       time.Time
+	OldThumbnailUrl string
 }
 
-// Partial update: a NULL parameter keeps the current value.
+// Partial update: a NULL parameter keeps the current value. old_thumbnail_url is the
+// value before the update, so a replaced image can be deleted from storage.
 func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams) (AdminUpdateCaseRow, error) {
 	row := q.db.QueryRow(ctx, adminUpdateCase,
 		arg.Title,
@@ -145,6 +660,7 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		arg.Hints,
 		arg.IsPublished,
 		arg.LlmModel,
+		arg.MusicTrack,
 		arg.ID,
 	)
 	var i AdminUpdateCaseRow
@@ -161,18 +677,249 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		&i.Hints,
 		&i.IsPublished,
 		&i.LlmModel,
+		&i.MusicTrack,
 		&i.CreatedAt,
+		&i.OldThumbnailUrl,
 	)
 	return i, err
 }
 
-const userIsAdmin = `-- name: UserIsAdmin :one
-SELECT is_admin FROM users WHERE id = $1
+const adminUpdateScene = `-- name: AdminUpdateScene :one
+WITH old AS (SELECT o.id, o.image_url FROM case_scenes o WHERE o.id = $4 AND o.case_id = $5 FOR UPDATE)
+UPDATE case_scenes c SET
+    scene_name    = COALESCE($1::text, c.scene_name),
+    image_url     = COALESCE($2::text, c.image_url),
+    display_order = COALESCE($3::int, c.display_order)
+FROM old
+WHERE c.id = old.id
+RETURNING c.id, c.case_id, c.scene_name, c.image_url, c.display_order, old.image_url AS old_image_url
 `
 
-func (q *Queries) UserIsAdmin(ctx context.Context, id string) (bool, error) {
-	row := q.db.QueryRow(ctx, userIsAdmin, id)
-	var is_admin bool
-	err := row.Scan(&is_admin)
-	return is_admin, err
+type AdminUpdateSceneParams struct {
+	SceneName    *string
+	ImageUrl     *string
+	DisplayOrder *int32
+	ID           string
+	CaseID       string
+}
+
+type AdminUpdateSceneRow struct {
+	ID           string
+	CaseID       string
+	SceneName    string
+	ImageUrl     string
+	DisplayOrder int32
+	OldImageUrl  string
+}
+
+func (q *Queries) AdminUpdateScene(ctx context.Context, arg AdminUpdateSceneParams) (AdminUpdateSceneRow, error) {
+	row := q.db.QueryRow(ctx, adminUpdateScene,
+		arg.SceneName,
+		arg.ImageUrl,
+		arg.DisplayOrder,
+		arg.ID,
+		arg.CaseID,
+	)
+	var i AdminUpdateSceneRow
+	err := row.Scan(
+		&i.ID,
+		&i.CaseID,
+		&i.SceneName,
+		&i.ImageUrl,
+		&i.DisplayOrder,
+		&i.OldImageUrl,
+	)
+	return i, err
+}
+
+const adminUpdateSuspect = `-- name: AdminUpdateSuspect :one
+WITH old AS (SELECT o.id, o.avatar_url FROM suspects o WHERE o.id = $13 AND o.case_id = $14 FOR UPDATE)
+UPDATE suspects s SET
+    name                   = COALESCE($1::text, s.name),
+    role                   = COALESCE($2::text, s.role),
+    avatar_url             = COALESCE($3::text, s.avatar_url),
+    initial_testimony      = COALESCE($4::text, s.initial_testimony),
+    is_culprit             = COALESCE($5::boolean, s.is_culprit),
+    display_order          = COALESCE($6::int, s.display_order),
+    relationship_to_victim = COALESCE($7::text, s.relationship_to_victim),
+    persona                = COALESCE($8::text, s.persona),
+    public_alibi           = COALESCE($9::text, s.public_alibi),
+    hidden_truth           = COALESCE($10::text, s.hidden_truth),
+    confession_triggers    = COALESCE($11::text, s.confession_triggers),
+    confession_keywords    = COALESCE($12::text[], s.confession_keywords)
+FROM old
+WHERE s.id = old.id
+RETURNING s.id, s.case_id, s.name, s.role, s.avatar_url, s.initial_testimony, s.is_culprit, s.display_order,
+          s.relationship_to_victim, s.persona, s.public_alibi, s.hidden_truth, s.confession_triggers, s.confession_keywords,
+          old.avatar_url AS old_avatar_url
+`
+
+type AdminUpdateSuspectParams struct {
+	Name                 *string
+	Role                 *string
+	AvatarUrl            *string
+	InitialTestimony     *string
+	IsCulprit            *bool
+	DisplayOrder         *int32
+	RelationshipToVictim *string
+	Persona              *string
+	PublicAlibi          *string
+	HiddenTruth          *string
+	ConfessionTriggers   *string
+	ConfessionKeywords   []string
+	ID                   string
+	CaseID               string
+}
+
+type AdminUpdateSuspectRow struct {
+	ID                   string
+	CaseID               string
+	Name                 string
+	Role                 string
+	AvatarUrl            string
+	InitialTestimony     string
+	IsCulprit            bool
+	DisplayOrder         int32
+	RelationshipToVictim string
+	Persona              string
+	PublicAlibi          string
+	HiddenTruth          string
+	ConfessionTriggers   string
+	ConfessionKeywords   []string
+	OldAvatarUrl         string
+}
+
+// Partial update like AdminUpdateCase; old_avatar_url is the value before it.
+func (q *Queries) AdminUpdateSuspect(ctx context.Context, arg AdminUpdateSuspectParams) (AdminUpdateSuspectRow, error) {
+	row := q.db.QueryRow(ctx, adminUpdateSuspect,
+		arg.Name,
+		arg.Role,
+		arg.AvatarUrl,
+		arg.InitialTestimony,
+		arg.IsCulprit,
+		arg.DisplayOrder,
+		arg.RelationshipToVictim,
+		arg.Persona,
+		arg.PublicAlibi,
+		arg.HiddenTruth,
+		arg.ConfessionTriggers,
+		arg.ConfessionKeywords,
+		arg.ID,
+		arg.CaseID,
+	)
+	var i AdminUpdateSuspectRow
+	err := row.Scan(
+		&i.ID,
+		&i.CaseID,
+		&i.Name,
+		&i.Role,
+		&i.AvatarUrl,
+		&i.InitialTestimony,
+		&i.IsCulprit,
+		&i.DisplayOrder,
+		&i.RelationshipToVictim,
+		&i.Persona,
+		&i.PublicAlibi,
+		&i.HiddenTruth,
+		&i.ConfessionTriggers,
+		&i.ConfessionKeywords,
+		&i.OldAvatarUrl,
+	)
+	return i, err
+}
+
+const getAppSettings = `-- name: GetAppSettings :one
+SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at
+FROM app_settings
+WHERE id
+`
+
+type GetAppSettingsRow struct {
+	DailyTokens        int32
+	TokenResetTime     string
+	TokenResetTimezone string
+	UpdatedAt          time.Time
+}
+
+func (q *Queries) GetAppSettings(ctx context.Context) (GetAppSettingsRow, error) {
+	row := q.db.QueryRow(ctx, getAppSettings)
+	var i GetAppSettingsRow
+	err := row.Scan(
+		&i.DailyTokens,
+		&i.TokenResetTime,
+		&i.TokenResetTimezone,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const seedAppSettings = `-- name: SeedAppSettings :exec
+INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone)
+VALUES ($1, $2, $3)
+ON CONFLICT (id) DO NOTHING
+`
+
+type SeedAppSettingsParams struct {
+	DailyTokens        int32
+	TokenResetTime     string
+	TokenResetTimezone string
+}
+
+// First startup only: an existing row (set from the admin panel) is never overwritten.
+func (q *Queries) SeedAppSettings(ctx context.Context, arg SeedAppSettingsParams) error {
+	_, err := q.db.Exec(ctx, seedAppSettings, arg.DailyTokens, arg.TokenResetTime, arg.TokenResetTimezone)
+	return err
+}
+
+const updateAppSettings = `-- name: UpdateAppSettings :one
+UPDATE app_settings SET
+    daily_tokens         = $1,
+    token_reset_time     = $2,
+    token_reset_timezone = $3,
+    updated_at           = now(),
+    updated_by           = $4
+WHERE id
+RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at
+`
+
+type UpdateAppSettingsParams struct {
+	DailyTokens        int32
+	TokenResetTime     string
+	TokenResetTimezone string
+	UpdatedBy          *string
+}
+
+type UpdateAppSettingsRow struct {
+	DailyTokens        int32
+	TokenResetTime     string
+	TokenResetTimezone string
+	UpdatedAt          time.Time
+}
+
+func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsParams) (UpdateAppSettingsRow, error) {
+	row := q.db.QueryRow(ctx, updateAppSettings,
+		arg.DailyTokens,
+		arg.TokenResetTime,
+		arg.TokenResetTimezone,
+		arg.UpdatedBy,
+	)
+	var i UpdateAppSettingsRow
+	err := row.Scan(
+		&i.DailyTokens,
+		&i.TokenResetTime,
+		&i.TokenResetTimezone,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const userRole = `-- name: UserRole :one
+SELECT role FROM users WHERE id = $1
+`
+
+func (q *Queries) UserRole(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, userRole, id)
+	var role string
+	err := row.Scan(&role)
+	return role, err
 }

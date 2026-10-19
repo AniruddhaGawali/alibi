@@ -1,5 +1,5 @@
 import { createApi } from './createApi'
-import type { UserProfile } from './user'
+import type { UserProfile, UserRole } from './user'
 
 export interface SignupInput {
   username: string
@@ -28,7 +28,7 @@ export interface AuthSession {
   jwt_token: string
   refresh_token: string
   expires_in: number
-  user: { id: string; username: string; email: string }
+  user: { id: string; username: string; email: string; role: UserRole }
 }
 
 export type { UserProfile }

@@ -17,6 +17,15 @@ func ClaimsFrom(ctx context.Context) (*Claims, bool) {
 	return c, ok
 }
 
+// Role returns the role claim of the authenticated user's access token ("" for a
+// token issued before roles were added).
+func Role(ctx context.Context) string {
+	if c, ok := ClaimsFrom(ctx); ok {
+		return c.Role
+	}
+	return ""
+}
+
 // UserID returns the authenticated user's ID set by Middleware.
 func UserID(ctx context.Context) string {
 	if c, ok := ClaimsFrom(ctx); ok {

@@ -126,6 +126,8 @@ func TestCacheSecondsOnlyCachesUniqueNamesForever(t *testing.T) {
 		"avatars/11111111_22222222.webp": immutableCacheSeconds,
 		"avatars/default/avatar-1.webp":  mutableCacheSeconds,
 		"cases/case-01/thumbnail.webp":   mutableCacheSeconds,
+		"cases/0e3c1a4e-2f1b-4b8e-9d6a-1c2b3d4e5f60/suspects/7a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d.webp": immutableCacheSeconds,
+		"cases/case-01/suspects/7a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d.webp":                              mutableCacheSeconds,
 	} {
 		if got := cacheSeconds(path); got != want {
 			t.Errorf("%s: max-age %d, want %d", path, got, want)

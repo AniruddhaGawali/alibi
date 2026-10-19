@@ -45,9 +45,11 @@ type Config struct {
 	LLMStrikesPerHour   int // blocked injection attempts per hour before a player is locked out
 
 	// Token economy and chat storage.
-	DailyTokens           int    // every balance is reset to this (and new accounts start with it); at most 10, the most a player can hold
-	TokenResetCron        string // standard 5-field cron spec for the daily reset
-	TokenResetTimezone    string // IANA zone the cron spec is read in
+	// The next three only seed app_settings on the first startup; after that they are
+	// edited from the admin panel (GET/PUT /api/admin/config).
+	DailyTokens           int    // every balance is reset to this (and new accounts start with it); 1-10, the most a player can hold
+	TokenResetTime        string // HH:MM the daily reset runs at
+	TokenResetTimezone    string // IANA zone the reset time is read in
 	MongoDatabase         string // database holding chat_messages
 	ChatWorkerConcurrency int    // chat storage consumers in the API process
 
@@ -204,8 +206,8 @@ func load(required []string) (*Config, error) {
 		LLMDailyTokenBudget: envInt("LLM_DAILY_TOKEN_BUDGET", 3_000_000, 0, 2_000_000_000),
 		LLMStrikesPerHour:   envInt("LLM_INJECTION_STRIKES_PER_HOUR", 5, 0, 1000),
 
-		DailyTokens:           envInt("DAILY_TOKENS", 10, 0, 10),
-		TokenResetCron:        envStr("TOKEN_RESET_CRON", "0 0 * * *"),
+		DailyTokens:           envInt("DAILY_TOKENS", 10, 1, 10),
+		TokenResetTime:        envStr("TOKEN_RESET_TIME", "00:00"),
 		TokenResetTimezone:    envStr("TOKEN_RESET_TIMEZONE", "UTC"),
 		MongoDatabase:         envStr("MONGO_DATABASE", "alibi"),
 		ChatWorkerConcurrency: envInt("CHAT_WORKER_CONCURRENCY", 2, 1, 32),

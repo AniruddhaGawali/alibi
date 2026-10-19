@@ -8,6 +8,8 @@ interface FormSwitchProps<T extends FieldValues> {
   label: string
   description?: string
   disabled?: boolean
+  /** Called after the form value changed (e.g. to switch off a competing field). */
+  onCheckedChange?: (checked: boolean) => void
 }
 
 export default function FormSwitch<T extends FieldValues>({
@@ -16,6 +18,7 @@ export default function FormSwitch<T extends FieldValues>({
   label,
   description,
   disabled,
+  onCheckedChange,
 }: FormSwitchProps<T>) {
   return (
     <Controller
@@ -33,7 +36,10 @@ export default function FormSwitch<T extends FieldValues>({
             id={name}
             name={field.name}
             checked={!!field.value}
-            onCheckedChange={field.onChange}
+            onCheckedChange={(checked) => {
+              field.onChange(checked)
+              onCheckedChange?.(checked)
+            }}
             onBlur={field.onBlur}
             disabled={disabled}
             aria-invalid={fieldState.invalid}

@@ -13,7 +13,10 @@ export interface UserProfile {
   avatar: AvatarInfo
   trophies: number
   token_balance: number
+  role: UserRole
 }
+
+export type UserRole = 'user' | 'admin'
 
 /** Either a custom image (max 1 MB) or the number (1-4) of a default avatar. */
 export type SetAvatarInput = { file: File } | { avatar: number }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ import (
 	"backend/internal/llm"
 	"backend/internal/middleware"
 	"backend/internal/queue"
+	"backend/internal/settings"
 	"backend/internal/storage"
 	"backend/internal/user"
 	"backend/internal/wallet"
@@ -127,6 +129,17 @@ func run() error {
 	}
 	checker := health.New(checks)
 
+	// Global game settings (P5.3): seeded from env on the first startup, edited from
+	// the admin panel after that.
+	settingsCtx, cancelSettings := context.WithTimeout(context.Background(), 10*time.Second)
+	gameSettings, err := settings.New(settingsCtx, settings.NewPGStore(pg), settings.Settings{
+		DailyTokens: cfg.DailyTokens, ResetTime: cfg.TokenResetTime, Timezone: cfg.TokenResetTimezone,
+	})
+	cancelSettings()
+	if err != nil {
+		return fmt.Errorf("load settings: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", checker.Handler)
 
@@ -147,7 +160,7 @@ func run() error {
 		Mail:           queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen)), // the email worker consumes it
 		Coins:          walletSvc,
 		TrustedProxies: cfg.TrustedProxies,
-		InitialTokens:  cfg.DailyTokens, // a new account starts with one day's tokens
+		InitialTokens:  gameSettings.DailyTokens, // a new account starts with one day's tokens
 		HashWorkers:    cfg.HashWorkers,
 	})
 	userOpts := []user.Option{user.WithUploadLimiter(user.NewRedisUploadLimiter(rdb, avatarUploadsPerHour, time.Hour))}
@@ -178,9 +191,12 @@ func run() error {
 	casesH := cases.NewHandler(cases.NewPGStore(pg), auth.UserID).WithLogs(chatStore) // notes can point at log entries
 
 	guard := interrogation.NewRedisGuard(rdb, interrogation.GuardConfig{
-		PerMinute:        cfg.LLMUserPerMinute,
-		IPPerMinute:      cfg.LLMIPPerMinute,
-		UserDailyCalls:   cfg.DailyTokens + cfg.LLMRefundsPerDay, // calls <= tokens spent + the refund allowance
+		PerMinute:      cfg.LLMUserPerMinute,
+		IPPerMinute:    cfg.LLMIPPerMinute,
+		UserDailyCalls: cfg.DailyTokens + cfg.LLMRefundsPerDay, // calls <= tokens spent + the refund allowance
+		DailyCalls: func(ctx context.Context) int { // the same, following the admin panel
+			return gameSettings.DailyTokens(ctx) + cfg.LLMRefundsPerDay
+		},
 		RefundsPerDay:    cfg.LLMRefundsPerDay,
 		MaxConcurrent:    cfg.LLMMaxConcurrent,
 		DailyCallBudget:  int64(cfg.LLMDailyCallBudget),
@@ -205,7 +221,11 @@ func run() error {
 		stopBackground()
 		<-chatWorkerDone
 	}()
-	resetCron, err := jobs.StartTokenReset(cfg.TokenResetCron, cfg.TokenResetTimezone, cfg.DailyTokens, walletSvc, rdb)
+	resetCron, err := jobs.StartTokenReset(func(ctx context.Context) (jobs.Schedule, error) {
+		s := gameSettings.Current(ctx)
+		hour, minute, loc, err := s.Clock()
+		return jobs.Schedule{Tokens: s.DailyTokens, Hour: hour, Minute: minute, Loc: loc}, err
+	}, walletSvc, rdb)
 	if err != nil {
 		return err
 	}
@@ -213,7 +233,11 @@ func run() error {
 	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID,
 		interrogation.WithClientIP(func(r *http.Request) string { return utils.ClientIP(r, cfg.TrustedProxies) }))
 	accuseH := accusation.NewHandler(accusation.NewPGStore(pg), accusation.NewRedisLeaderboard(rdb), auth.UserID)
-	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID)
+	adminOpts := []admin.Option{admin.WithTokenRole(auth.Role), admin.WithSettings(gameSettings), admin.WithTokens(walletSvc)}
+	if images != nil {
+		adminOpts = append(adminOpts, admin.WithImages(images))
+	}
+	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID, adminOpts...)
 	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID).WithBoard(dashboard.NewRedisBoard(rdb))
 
 	mux.HandleFunc("POST /api/auth/signup", authH.Signup)
@@ -235,8 +259,26 @@ func run() error {
 	mux.HandleFunc("DELETE /api/cases/{id}/notes/{note_id}", casesH.DeleteNote)
 	mux.HandleFunc("POST /api/cases/{id}/suspects/{suspect_id}/interrogate", interrogationH.Ask)
 	mux.HandleFunc("GET /api/chat/{case_id}/{suspect_id}", chatH.History)
-	mux.HandleFunc("POST /api/admin/cases", adminH.RequireAdmin(adminH.CreateCase))
-	mux.HandleFunc("PATCH /api/admin/cases/{id}", adminH.RequireAdmin(adminH.UpdateCase))
+	// Admin panel (P5.3): every route checks the admin role (token, then database).
+	adminOnly := adminH.AdminOnly
+	mux.HandleFunc("GET /api/admin/models", adminOnly(adminH.ListModels))
+	mux.HandleFunc("GET /api/admin/config", adminOnly(adminH.GetConfig))
+	mux.HandleFunc("PUT /api/admin/config", adminOnly(adminH.UpdateConfig))
+	mux.HandleFunc("POST /api/admin/upload", adminOnly(adminH.Upload))
+	mux.HandleFunc("GET /api/admin/users", adminOnly(adminH.SearchUsers))
+	mux.HandleFunc("POST /api/admin/users/{id}/tokens", adminOnly(adminH.GrantTokens))
+	mux.HandleFunc("GET /api/admin/cases", adminOnly(adminH.ListCases))
+	mux.HandleFunc("POST /api/admin/cases", adminOnly(adminH.CreateCase))
+	mux.HandleFunc("GET /api/admin/cases/{id}", adminOnly(adminH.GetCase))
+	mux.HandleFunc("PATCH /api/admin/cases/{id}", adminOnly(adminH.UpdateCase))
+	mux.HandleFunc("DELETE /api/admin/cases/{id}", adminOnly(adminH.DeleteCase))
+	mux.HandleFunc("GET /api/admin/cases/{id}/suspects", adminOnly(adminH.ListSuspects))
+	mux.HandleFunc("POST /api/admin/cases/{id}/suspects", adminOnly(adminH.CreateSuspect))
+	mux.HandleFunc("PATCH /api/admin/cases/{id}/suspects/{suspect_id}", adminOnly(adminH.UpdateSuspect))
+	mux.HandleFunc("DELETE /api/admin/cases/{id}/suspects/{suspect_id}", adminOnly(adminH.DeleteSuspect))
+	mux.HandleFunc("POST /api/admin/cases/{id}/scenes", adminOnly(adminH.CreateScene))
+	mux.HandleFunc("PATCH /api/admin/cases/{id}/scenes/{scene_id}", adminOnly(adminH.UpdateScene))
+	mux.HandleFunc("DELETE /api/admin/cases/{id}/scenes/{scene_id}", adminOnly(adminH.DeleteScene))
 	mux.HandleFunc("GET /api/dashboard/stories", dashH.Stories)
 	mux.HandleFunc("GET /api/dashboard/stats", dashH.Stats)
 	mux.HandleFunc("GET /api/dashboard/leaderboard", dashH.Leaderboard)

@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useSessionStore } from '@/store/useSessionStore'
+import MusicToggle from './MusicToggle'
 import SoundToggle from './SoundToggle'
 import UserMenu from './UserMenu'
 
@@ -14,6 +15,7 @@ export default function Navbar() {
           Alibi
         </Link>
         <div className="flex items-center gap-2">
+        <MusicToggle />
         <SoundToggle />
         {loggedIn ? (
           <UserMenu />

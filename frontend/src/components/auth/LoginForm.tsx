@@ -28,8 +28,9 @@ export default function LoginForm() {
   const login = useLoginMutation({
     onSuccess: async (session) => {
       try {
-        await startSession(session)
-        navigate('/dashboard')
+        const profile = await startSession(session)
+        // Admins land in the admin panel; everyone else in the game.
+        navigate(profile.role === 'admin' ? '/admin/dashboard' : '/dashboard')
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not load your profile')
       }

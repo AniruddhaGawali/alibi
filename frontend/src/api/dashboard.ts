@@ -21,6 +21,8 @@ export interface DashboardStats {
   active_case_title: string | null
   /** Id of the story in progress (match cards on this, titles are not unique), null when free. */
   active_story_id: string | null
+  /** Music track key of the case in progress ('' = main theme), null when free. */
+  active_music_track: string | null
 }
 
 export interface LeaderboardEntry {

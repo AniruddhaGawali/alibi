@@ -42,6 +42,7 @@ type ActiveCase struct {
 	CaseID  string // this play-through
 	StoryID string // the story being played
 	Title   string // the story's title
+	Music   string // the story's music track key; "" for the main theme
 }
 
 // Store is the PostgreSQL side of the dashboard; *PGStore implements it.
@@ -98,7 +99,7 @@ func (s *PGStore) ActiveCase(ctx context.Context, userID string) (*ActiveCase, e
 	if err != nil {
 		return nil, err
 	}
-	return &ActiveCase{CaseID: row.CaseID, StoryID: row.StoryID, Title: row.Title}, nil
+	return &ActiveCase{CaseID: row.CaseID, StoryID: row.StoryID, Title: row.Title, Music: row.MusicTrack}, nil
 }
 
 func (s *PGStore) TopPlayers(ctx context.Context, limit int) ([]Player, error) {

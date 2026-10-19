@@ -10,24 +10,30 @@ import (
 )
 
 const getActiveCase = `-- name: GetActiveCase :one
-SELECT l.case_id, l.story_id, s.title
+SELECT l.case_id, l.story_id, s.title, s.music_track
 FROM active_case_locks l
 JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = $1
 `
 
 type GetActiveCaseRow struct {
-	CaseID  string
-	StoryID string
-	Title   string
+	CaseID     string
+	StoryID    string
+	Title      string
+	MusicTrack string
 }
 
-// The case the user is locked into, with its story's id and title for display.
-// A lock on a story that was unpublished since does not count.
+// The case the user is locked into, with its story's id, title and music track
+// (” = the main theme). A lock on a story that was unpublished since does not count.
 func (q *Queries) GetActiveCase(ctx context.Context, userID string) (GetActiveCaseRow, error) {
 	row := q.db.QueryRow(ctx, getActiveCase, userID)
 	var i GetActiveCaseRow
-	err := row.Scan(&i.CaseID, &i.StoryID, &i.Title)
+	err := row.Scan(
+		&i.CaseID,
+		&i.StoryID,
+		&i.Title,
+		&i.MusicTrack,
+	)
 	return i, err
 }
 

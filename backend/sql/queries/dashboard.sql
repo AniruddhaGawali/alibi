@@ -25,9 +25,9 @@ ORDER BY trophies DESC, created_at, id
 LIMIT @max_rows::int;
 
 -- name: GetActiveCase :one
--- The case the user is locked into, with its story's id and title for display.
--- A lock on a story that was unpublished since does not count.
-SELECT l.case_id, l.story_id, s.title
+-- The case the user is locked into, with its story's id, title and music track
+-- ('' = the main theme). A lock on a story that was unpublished since does not count.
+SELECT l.case_id, l.story_id, s.title, s.music_track
 FROM active_case_locks l
 JOIN stories s ON s.id = l.story_id AND s.is_published
 WHERE l.user_id = @user_id;

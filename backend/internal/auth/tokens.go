@@ -26,10 +26,13 @@ const (
 
 var ErrInvalidToken = errors.New("auth: invalid token")
 
-// Claims are the JWT claims: Subject is the user ID, ID is the unique jti.
+// Claims are the JWT claims: Subject is the user ID, ID is the unique jti. Role is
+// "user" or "admin" when the token was signed; admin routes still re-check it in
+// the database (admin.Handler.AdminOnly), so a demotion applies before the token expires.
 type Claims struct {
 	Type  TokenType `json:"typ"`
 	Email string    `json:"email"`
+	Role  string    `json:"role,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -61,7 +64,7 @@ func newJTI() (string, error) {
 }
 
 // Issue signs a token of the given type for userID.
-func (m *TokenManager) Issue(userID, email string, typ TokenType) (string, *Claims, error) {
+func (m *TokenManager) Issue(userID, email, role string, typ TokenType) (string, *Claims, error) {
 	jti, err := newJTI()
 	if err != nil {
 		return "", nil, err
@@ -74,6 +77,7 @@ func (m *TokenManager) Issue(userID, email string, typ TokenType) (string, *Clai
 	claims := &Claims{
 		Type:  typ,
 		Email: email,
+		Role:  role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    issuer,
 			Subject:   userID,
