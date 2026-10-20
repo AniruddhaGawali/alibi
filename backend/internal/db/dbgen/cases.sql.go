@@ -37,7 +37,7 @@ func (q *Queries) CaseIsPublished(ctx context.Context, id string) (bool, error) 
 }
 
 const getCaseBriefing = `-- name: GetCaseBriefing :one
-SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, cardinality(hints)::int AS hints_total
+SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, cardinality(hints)::int AS hints_total, chat_tips
 FROM stories
 WHERE id = $1 AND is_published
 `
@@ -50,10 +50,12 @@ type GetCaseBriefingRow struct {
 	DifficultyLevel string
 	RewardTrophies  int32
 	HintsTotal      int32
+	ChatTips        []string
 }
 
 // A published case's briefing text. Unpublished cases do not exist for players.
-// hints_total only counts the hints; their text is never selected here.
+// hints_total only counts the hints; their text is never selected here. chat_tips are
+// public (shown to investigators under the chat box).
 func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefingRow, error) {
 	row := q.db.QueryRow(ctx, getCaseBriefing, id)
 	var i GetCaseBriefingRow
@@ -65,6 +67,7 @@ func (q *Queries) GetCaseBriefing(ctx context.Context, id string) (GetCaseBriefi
 		&i.DifficultyLevel,
 		&i.RewardTrophies,
 		&i.HintsTotal,
+		&i.ChatTips,
 	)
 	return i, err
 }
@@ -224,7 +227,7 @@ func (q *Queries) ListCaseScenes(ctx context.Context, caseID string) ([]ListCase
 }
 
 const listCaseSuspects = `-- name: ListCaseSuspects :many
-SELECT id, name, role, avatar_url, initial_testimony
+SELECT id, name, role, avatar_url, initial_testimony, public_knowledge
 FROM suspects
 WHERE case_id = $1
 ORDER BY display_order, name
@@ -236,6 +239,7 @@ type ListCaseSuspectsRow struct {
 	Role             string
 	AvatarUrl        string
 	InitialTestimony string
+	PublicKnowledge  string
 }
 
 // Columns are listed explicitly: is_culprit (and anything else internal) must
@@ -255,6 +259,7 @@ func (q *Queries) ListCaseSuspects(ctx context.Context, caseID string) ([]ListCa
 			&i.Role,
 			&i.AvatarUrl,
 			&i.InitialTestimony,
+			&i.PublicKnowledge,
 		); err != nil {
 			return nil, err
 		}

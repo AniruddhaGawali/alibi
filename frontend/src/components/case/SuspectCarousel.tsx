@@ -50,9 +50,9 @@ function SuspectSlider({ suspects, chatLocked }: { suspects: Suspect[]; chatLock
   const [sliderRef, slider] = useKeenSlider<HTMLDivElement>({
     slides: { perView: 1.15 },
     breakpoints: {
-      '(min-width: 640px)': { slides: { perView: 2 } },
-      '(min-width: 1024px)': { slides: { perView: 3 } },
-      '(min-width: 1280px)': { slides: { perView: 4 } },
+      '(min-width: 640px)': { slides: { perView: 1.5 } },
+      '(min-width: 768px)': { slides: { perView: 2 } },
+      '(min-width: 1280px)': { slides: { perView: 3 } },
     },
     // perView changes with the breakpoint, and so does how far the slider can go
     created: syncStops,

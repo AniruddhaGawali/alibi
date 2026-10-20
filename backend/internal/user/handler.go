@@ -72,6 +72,7 @@ type profileResp struct {
 	Trophies     int        `json:"trophies"`
 	TokenBalance int64      `json:"token_balance"`
 	Role         string     `json:"role"`
+	PlayerMode   string     `json:"player_mode"` // "investigator" or "master_sleuth"
 }
 
 type avatarReq struct {
@@ -109,8 +110,34 @@ func (h *Handler) Profile(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.SuccessResponse(w, http.StatusOK, profileResp{
 		ID: u.ID, Username: u.Username, Email: u.Email,
-		Avatar: avatarOf(u), Trophies: u.Trophies, TokenBalance: balance, Role: u.Role,
+		Avatar: avatarOf(u), Trophies: u.Trophies, TokenBalance: balance, Role: u.Role, PlayerMode: u.PlayerMode,
 	})
+}
+
+type modeReq struct {
+	Mode string `json:"mode" validate:"required,oneof=investigator master_sleuth"`
+}
+
+// SetMode handles PUT /api/user/mode (protected by auth.Middleware): the player's
+// difficulty mode. It only changes what the frontend shows, never what the API serves.
+func (h *Handler) SetMode(w http.ResponseWriter, r *http.Request) {
+	uid := h.userID(r.Context())
+	var req modeReq
+	if !utils.BindAndValidate(w, r, &req) {
+		return
+	}
+	err := h.store.SetPlayerMode(r.Context(), uid, req.Mode)
+	if errors.Is(err, ErrNotFound) {
+		utils.ErrorResponse(w, http.StatusUnauthorized, "unauthorized", nil)
+		return
+	}
+	if err != nil {
+		utils.LogErrorCtx(r.Context(), "save player mode failed", "user_id", uid, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not save difficulty mode", nil)
+		return
+	}
+	utils.LogInfoCtx(r.Context(), "player mode set", "user_id", uid, "mode", req.Mode)
+	utils.SuccessResponse(w, http.StatusOK, map[string]string{"player_mode": req.Mode})
 }
 
 // SetAvatar handles POST /api/user/avatar (protected by auth.Middleware). It accepts

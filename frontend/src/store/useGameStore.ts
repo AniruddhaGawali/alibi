@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AccusationOutcome } from '@/api/cases'
+import type { PlayerMode } from '@/api/user'
 
 interface GameState {
   /**
@@ -15,6 +16,11 @@ interface GameState {
   /** Hints revealed this session, by case id, in order (the briefing also carries them after a reload). */
   hints: Record<string, string[]>
   activeCaseId: string | null
+  /**
+   * The difficulty mode. Mirrored from the profile by `useSyncPlayerMode`, and changed at
+   * once by the mode form (optimistic). Investigator until the profile says otherwise.
+   */
+  playerMode: PlayerMode
   /** Suspect whose interrogation logs the case page shows; null = everyone's. */
   selectedSuspectFilter: string | null
   setTokenBalance: (balance: number | null) => void
@@ -25,6 +31,7 @@ interface GameState {
   /** Add (or take away) tokens locally; never goes below zero. No-op while the balance is unknown. */
   adjustTokenBalance: (delta: number) => void
   setActiveCaseId: (caseId: string | null) => void
+  setPlayerMode: (mode: PlayerMode) => void
   setSuspectFilter: (suspectId: string | null) => void
 }
 
@@ -34,6 +41,7 @@ export const useGameStore = create<GameState>()((set) => ({
   outcomes: {},
   hints: {},
   activeCaseId: null,
+  playerMode: 'investigator',
   selectedSuspectFilter: null,
   setTokenBalance: (tokenBalance) => set({ tokenBalance }),
   setTrophies: (trophies) => set({ trophies }),
@@ -47,5 +55,6 @@ export const useGameStore = create<GameState>()((set) => ({
   adjustTokenBalance: (delta) =>
     set((s) => (s.tokenBalance === null ? s : { tokenBalance: Math.max(0, s.tokenBalance + delta) })),
   setActiveCaseId: (activeCaseId) => set({ activeCaseId }),
+  setPlayerMode: (playerMode) => set({ playerMode }),
   setSuspectFilter: (selectedSuspectFilter) => set({ selectedSuspectFilter }),
 }))

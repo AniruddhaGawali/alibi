@@ -3,7 +3,7 @@ import { FieldGroup } from '@/components/ui/field'
 import { FormImagePicker, FormInput, FormSelect, FormTextarea } from '@/components/form'
 import AdminSection from './AdminSection'
 import ModelPicker from './ModelPicker'
-import { DIFFICULTY_OPTIONS, HINT_COUNT, MUSIC_OPTIONS, type CaseFormValues } from './caseSchema'
+import { DIFFICULTY_OPTIONS, HINT_COUNT, MUSIC_OPTIONS, TIP_COUNT, type CaseFormValues } from './caseSchema'
 
 interface Props {
   control: Control<CaseFormValues>
@@ -54,7 +54,7 @@ export function CaseBasicsSection({ control, disabled }: Props) {
   )
 }
 
-/** The full story, the closing reveal and the progressive hints. */
+/** The full story, the closing reveal, the progressive hints and the chat tips. */
 export function CaseStorySection({ control }: Props) {
   return (
     <AdminSection title="Story & progression">
@@ -80,6 +80,24 @@ export function CaseStorySection({ control }: Props) {
           </div>
           {Array.from({ length: HINT_COUNT }, (_, i) => (
             <FormInput key={i} control={control} name={`hints.${i}`} label={`Hint ${i + 1}`} />
+          ))}
+        </div>
+        <div className="space-y-5">
+          <div>
+            <h3 className="font-heading text-base text-gold">Detective tips (Investigator mode only)</h3>
+            <p className="text-sm text-muted-foreground">
+              Free nudges shown under the chat box, one at random per conversation. Every player receives them, so never give away the
+              answer. Leave all empty to use the generic tips.
+            </p>
+          </div>
+          {Array.from({ length: TIP_COUNT }, (_, i) => (
+            <FormInput
+              key={i}
+              control={control}
+              name={`chat_tips.${i}`}
+              label={`Tip ${i + 1}`}
+              placeholder={i === 0 ? 'Ask each suspect when they last heard the clock chime.' : undefined}
+            />
           ))}
         </div>
       </FieldGroup>

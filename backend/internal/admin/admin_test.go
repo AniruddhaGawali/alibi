@@ -380,6 +380,33 @@ func TestHints(t *testing.T) {
 	}
 }
 
+func TestChatTips(t *testing.T) {
+	// Up to five tips are saved; none is fine.
+	s := admin()
+	if rec := serve(s, &fakeModels{}, "POST", "/api/admin/cases", newCase+`,"chat_tips":["ask about the clock","check the garden"]}`); rec.Code != 201 || len(s.created.ChatTips) != 2 {
+		t.Fatalf("two tips: %d %s %+v", rec.Code, rec.Body, s.created)
+	}
+	// Too many, empty or oversized tips are refused.
+	for name, body := range map[string]string{
+		"six":   newCase + `,"chat_tips":["a","b","c","d","e","f"]}`,
+		"empty": newCase + `,"chat_tips":["a",""]}`,
+		"long":  newCase + `,"chat_tips":["` + strings.Repeat("x", 301) + `"]}`,
+	} {
+		if rec := serve(admin(), &fakeModels{}, "POST", "/api/admin/cases", body); rec.Code != 422 {
+			t.Errorf("%s: status %d, want 422", name, rec.Code)
+		}
+	}
+	// PATCH: [] clears them, omitting them leaves them alone.
+	s = admin()
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"chat_tips":[]}`); rec.Code != 200 || s.patched.ChatTips == nil || len(s.patched.ChatTips) != 0 {
+		t.Fatalf("clear: %d %+v", rec.Code, s.patched)
+	}
+	s = admin()
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"title":"x"}`); rec.Code != 200 || s.patched.ChatTips != nil {
+		t.Fatalf("omitted: %d %+v", rec.Code, s.patched)
+	}
+}
+
 func TestDeleteCase(t *testing.T) {
 	imgs := &fakeImages{}
 	owned := imgs.PublicURL("cases/" + caseID + "/thumbnail/0e3c1a4e-2f1b-4b8e-9d6a-1c2b3d4e5f60.webp")

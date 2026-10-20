@@ -30,7 +30,7 @@ export default function GoogleCallbackPage() {
       .mutateAsync({ ticket })
       .then(async (session) => {
         const profile = await startSession(session)
-        navigate(session.is_new ? '/onboarding/avatar' : profile.role === 'admin' ? '/admin/dashboard' : '/dashboard', { replace: true })
+        navigate(session.is_new ? '/onboarding/avatar?new=1' : profile.role === 'admin' ? '/admin/dashboard' : '/dashboard', { replace: true })
       })
       .catch((e: unknown) => fail(e instanceof Error ? e.message : 'Google sign-in failed'))
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once

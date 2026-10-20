@@ -5,6 +5,7 @@ import LandingFooter from '@/components/landing/LandingFooter'
 import LandingHero from '@/components/landing/LandingHero'
 import LandingLeaderboard from '@/components/landing/LandingLeaderboard'
 import LandingTopBar from '@/components/landing/LandingTopBar'
+import ModesBand from '@/components/landing/ModesBand'
 import RankLadder from '@/components/landing/RankLadder'
 
 export default function LandingPage() {
@@ -13,6 +14,7 @@ export default function LandingPage() {
       <LandingTopBar />
       <LandingHero />
       <HowToPlay />
+      <ModesBand />
       <EconomySection />
       <RankLadder />
       <div id="leaderboard" className="scroll-mt-8">

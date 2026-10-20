@@ -3,23 +3,29 @@ import {
   RiChat3Line,
   RiCoinsLine,
   RiFileTextLine,
+  RiFootprintLine,
   RiLightbulbLine,
   RiLockLine,
   RiMedalLine,
   RiNodeTree,
   RiScales3Line,
   RiSearchEyeLine,
+  RiShieldUserLine,
   RiSurveyLine,
   RiTrophyLine,
 } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Checklist, RuleSection } from '@/components/rules/RuleSection'
+import ModesSection from '@/components/rules/ModesSection'
+import Walkthrough from '@/components/rules/Walkthrough'
 import { RANKS } from '@/utils/rank'
 import { useLoggedIn } from '@/hooks/useLoggedIn'
 
 const CONTENTS = [
   ['goal', 'The goal'],
   ['flow', 'How a case plays'],
+  ['walkthrough', 'Step by step'],
+  ['modes', 'Difficulty modes'],
   ['tokens', 'Tokens'],
   ['questions', 'Asking questions'],
   ['hints', 'Hints'],
@@ -83,6 +89,15 @@ export default function HowToPlayPage() {
             submit your accusation.
           </span>
         </p>
+      </RuleSection>
+
+      <RuleSection id="walkthrough" icon={RiFootprintLine} title="Step by step: your first case">
+        <p>A full case from the dashboard to the verdict, with what you will see on screen at each step.</p>
+        <Walkthrough />
+      </RuleSection>
+
+      <RuleSection id="modes" icon={RiShieldUserLine} title="Difficulty modes">
+        <ModesSection />
       </RuleSection>
 
       <RuleSection id="tokens" icon={RiCoinsLine} title="Tokens">

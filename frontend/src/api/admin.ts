@@ -44,6 +44,8 @@ export interface AdminCaseFields {
   llm_model: string
   /** A case track key (utils/music CASE_TRACKS); '' plays the main theme. */
   music_track: string
+  /** Up to 5 public detective tips shown under the chat box to investigators. */
+  chat_tips: string[]
 }
 
 export interface AdminCase extends AdminCaseFields {
@@ -57,6 +59,8 @@ export interface AdminSuspectFields {
   role: string
   avatar_url: string
   initial_testimony: string
+  /** Background shown to players in investigator mode only. Public, never a secret. */
+  public_knowledge: string
   is_culprit: boolean
   display_order: number
   relationship_to_victim: string

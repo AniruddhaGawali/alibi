@@ -68,6 +68,13 @@ export default function SuspectCard({ control, setValue, index, count, onRemove,
         </div>
         <FormTextarea
           control={control}
+          name={`${p}.public_knowledge`}
+          label="Public Knowledge / Suspect Background (shown only in Investigator mode)"
+          description="What the town already knows about them. Every player's browser receives it, so never put a secret here."
+          rows={3}
+        />
+        <FormTextarea
+          control={control}
           name={`${p}.initial_testimony`}
           label="Initial testimony"
           description="Shown to the player in the briefing."
