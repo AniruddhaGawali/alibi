@@ -172,6 +172,19 @@ func TestActiveLockRestrictsOtherCases(t *testing.T) {
 	}
 }
 
+// A case the player already closed stays readable while they work on another one.
+func TestClosedCaseReadableWhileLocked(t *testing.T) {
+	h, st := newHandler()
+	st.briefing.ID = caseB
+	st.lock = &Lock{CaseID: attempt, StoryID: caseA}
+	st.result = &Result{Correct: true}
+	for name, fn := range map[string]http.HandlerFunc{"briefing": h.Briefing, "suspects": h.Suspects} {
+		if rec := do(fn, "GET", caseB); rec.Code != 200 {
+			t.Errorf("%s of a closed case while locked: %d", name, rec.Code)
+		}
+	}
+}
+
 func TestStart(t *testing.T) {
 	h, st := newHandler()
 	st.known[caseB] = true
