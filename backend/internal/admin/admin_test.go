@@ -188,6 +188,7 @@ func newTestHandler(store *fakeStore, models *fakeModels, opts ...Option) http.H
 	mux.HandleFunc("GET /api/admin/models", a(h.ListModels))
 	mux.HandleFunc("GET /api/admin/users", a(h.SearchUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/tokens", a(h.GrantTokens))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-limits", a(h.ResetLimits))
 	mux.HandleFunc("GET /api/admin/config", a(h.GetConfig))
 	mux.HandleFunc("PUT /api/admin/config", a(h.UpdateConfig))
 	mux.HandleFunc("POST /api/admin/upload", a(h.Upload))
@@ -633,6 +634,35 @@ func TestGrantTokens(t *testing.T) {
 	}
 	if rec := serve(admin(), &fakeModels{}, "POST", "/api/admin/users/"+suspectID+"/tokens", `{"amount":1}`); rec.Code != 503 {
 		t.Fatalf("no wallet: %d", rec.Code)
+	}
+}
+
+type fakeLimits struct{ reset []string }
+
+func (f *fakeLimits) ResetLimits(_ context.Context, id string) error {
+	f.reset = append(f.reset, id)
+	return nil
+}
+
+func TestResetLimits(t *testing.T) {
+	l := &fakeLimits{}
+	h := newTestHandler(admin(), &fakeModels{}, WithLimitReset(l))
+	path := "/api/admin/users/" + suspectID + "/reset-limits"
+	if rec := serveWith(h, "POST", path, ""); rec.Code != 200 || len(l.reset) != 1 || l.reset[0] != suspectID {
+		t.Fatalf("status %d %s %v", rec.Code, rec.Body, l.reset)
+	}
+	l.reset = nil
+	if rec := serveWith(h, "POST", "/api/admin/users/nope/reset-limits", ""); rec.Code != 400 || len(l.reset) != 0 {
+		t.Fatalf("bad id: %d", rec.Code)
+	}
+	if rec := serveWith(h, "POST", "/api/admin/users/"+caseID+"/reset-limits", ""); rec.Code != 404 || len(l.reset) != 0 {
+		t.Fatalf("no player: %d", rec.Code)
+	}
+	if rec := serve(&fakeStore{}, &fakeModels{}, "POST", path, ""); rec.Code != 403 {
+		t.Fatalf("player: %d", rec.Code)
+	}
+	if rec := serve(admin(), &fakeModels{}, "POST", path, ""); rec.Code != 503 {
+		t.Fatalf("no guard: %d", rec.Code)
 	}
 }
 

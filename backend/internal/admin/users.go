@@ -76,3 +76,32 @@ func (h *Handler) GrantTokens(w http.ResponseWriter, r *http.Request) {
 		UserID: id, TokenBalance: balance, Granted: granted, Capped: granted < req.Amount && balance >= user.MaxTokenBalance,
 	})
 }
+
+type resetLimitsResp struct {
+	UserID string `json:"user_id"`
+}
+
+// ResetLimits handles POST /api/admin/users/{id}/reset-limits: clears the player's
+// daily interrogation allowance, refund count, per-minute window and strike lockout
+// so they can question suspects again today. Their token balance is not changed.
+func (h *Handler) ResetLimits(w http.ResponseWriter, r *http.Request) {
+	if h.limits == nil {
+		utils.ErrorResponse(w, http.StatusServiceUnavailable, "resetting limits is not available", nil)
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if _, err := h.store.GetUser(r.Context(), id); err != nil {
+		h.storeFailed(w, r, err, "player", "load player failed")
+		return
+	}
+	if err := h.limits.ResetLimits(r.Context(), id); err != nil {
+		utils.LogErrorCtx(r.Context(), "reset interrogation limits failed", "user_id", id, "err", err)
+		utils.ErrorResponse(w, http.StatusInternalServerError, "could not reset the limits", nil)
+		return
+	}
+	utils.LogInfoCtx(r.Context(), "admin reset interrogation limits", "admin_id", h.userID(r.Context()), "user_id", id)
+	utils.SuccessResponse(w, http.StatusOK, resetLimitsResp{UserID: id})
+}

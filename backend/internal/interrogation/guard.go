@@ -171,6 +171,20 @@ func (g *RedisGuard) Admit(ctx context.Context, userID string) error {
 	return nil
 }
 
+// ResetLimits clears one player's interrogation limits for today: the daily
+// model-call counter, the refund counter, the per-minute window and any strike
+// lockout. It is the admin panel's way to unblock a player; their token balance and
+// the global budgets are untouched.
+func (g *RedisGuard) ResetLimits(ctx context.Context, userID string) error {
+	day, _ := g.day()
+	return g.rdb.Del(ctx,
+		"llm:calls:"+userID+":"+day,
+		"llm:refunds:"+userID+":"+day,
+		"llm:rate:user:"+userID,
+		"llm:strikes:"+userID,
+	).Err()
+}
+
 func (g *RedisGuard) Strike(ctx context.Context, userID string) {
 	if g.cfg.StrikesPerHour <= 0 {
 		return

@@ -247,7 +247,7 @@ func run() error {
 	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID,
 		interrogation.WithClientIP(func(r *http.Request) string { return utils.ClientIP(r, cfg.TrustedProxies) }))
 	accuseH := accusation.NewHandler(accusation.NewPGStore(pg), accusation.NewRedisLeaderboard(rdb), auth.UserID)
-	adminOpts := []admin.Option{admin.WithTokenRole(auth.Role), admin.WithSettings(gameSettings), admin.WithTokens(walletSvc)}
+	adminOpts := []admin.Option{admin.WithTokenRole(auth.Role), admin.WithSettings(gameSettings), admin.WithTokens(walletSvc), admin.WithLimitReset(guard)}
 	if images != nil {
 		adminOpts = append(adminOpts, admin.WithImages(images))
 	}
@@ -300,6 +300,7 @@ func run() error {
 	mux.HandleFunc("POST /api/admin/upload", adminOnly(adminH.Upload))
 	mux.HandleFunc("GET /api/admin/users", adminOnly(adminH.SearchUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/tokens", hc.Invalidates(adminOnly(adminH.GrantTokens), "u:{id}:wallet"))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-limits", adminOnly(adminH.ResetLimits))
 	mux.HandleFunc("GET /api/admin/cases", adminOnly(adminH.ListCases))
 	mux.HandleFunc("POST /api/admin/cases", hc.Invalidates(adminOnly(adminH.CreateCase), "catalog"))
 	mux.HandleFunc("GET /api/admin/cases/{id}", adminOnly(adminH.GetCase))

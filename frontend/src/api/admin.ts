@@ -163,6 +163,9 @@ export const adminApi = createApi({
       query: ({ id, amount }) => ({ url: `/api/admin/users/${id}/tokens`, method: 'POST', body: { amount } }),
       invalidatesTags: ['AdminUsers'],
     }),
+    resetAdminUserLimits: build.mutation<{ user_id: string }, string>({
+      query: (id) => ({ url: `/api/admin/users/${id}/reset-limits`, method: 'POST' }),
+    }),
     getAdminCases: build.query<AdminCaseSummary[]>({
       query: () => '/api/admin/cases',
       providesTags: ['AdminCases'],
@@ -223,6 +226,7 @@ export const {
   useGetAdminModelsQuery,
   useSearchAdminUsersQuery,
   useGrantAdminTokensMutation,
+  useResetAdminUserLimitsMutation,
   useGetAdminCasesQuery,
   useGetAdminCaseQuery,
   useCreateAdminCaseMutation,

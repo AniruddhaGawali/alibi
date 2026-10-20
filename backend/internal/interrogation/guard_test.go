@@ -150,3 +150,32 @@ func TestGuardCircuitBreaker(t *testing.T) {
 		release()
 	}
 }
+
+func TestGuardResetLimitsUnblocksOnePlayer(t *testing.T) {
+	g, _ := newGuard(t, GuardConfig{MaxConcurrent: 5, UserDailyCalls: 1, StrikesPerHour: 1})
+	ctx := context.Background()
+	release, err := g.Begin(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	g.Strike(ctx, "u1")
+	var lim *LimitError
+	if _, err := g.Begin(ctx, "u1"); !errors.As(err, &lim) || lim.Scope != "daily" {
+		t.Fatalf("over the daily allowance: %v", err)
+	}
+	if err := g.Admit(ctx, "u1"); !errors.As(err, &lim) || lim.Scope != "strikes" {
+		t.Fatalf("struck out: %v", err)
+	}
+	if err := g.ResetLimits(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Admit(ctx, "u1"); err != nil {
+		t.Fatalf("after reset admit: %v", err)
+	}
+	release, err = g.Begin(ctx, "u1")
+	if err != nil {
+		t.Fatalf("after reset begin: %v", err)
+	}
+	release()
+}
