@@ -35,6 +35,7 @@ type fakeStore struct {
 	caseImages []string
 	searched   *string
 	balance    int64 // the player's balance GetUser reports
+	order      []string
 }
 
 type fakeWallet struct{ granted []int64 }
@@ -85,6 +86,14 @@ func (f *fakeStore) UpdateCase(_ context.Context, id string, p CasePatch) (*Case
 	}
 	return c, f.oldImage, nil
 }
+func (f *fakeStore) ReorderCases(_ context.Context, ids []string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.order = ids
+	return nil
+}
+
 func (f *fakeStore) DeleteCase(_ context.Context, id string) ([]string, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -186,6 +195,7 @@ func newTestHandler(store *fakeStore, models *fakeModels, opts ...Option) http.H
 	mux := http.NewServeMux()
 	a := h.AdminOnly
 	mux.HandleFunc("GET /api/admin/models", a(h.ListModels))
+	mux.HandleFunc("PUT /api/admin/cases/order", a(h.ReorderCases))
 	mux.HandleFunc("GET /api/admin/users", a(h.SearchUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/tokens", a(h.GrantTokens))
 	mux.HandleFunc("POST /api/admin/users/{id}/reset-limits", a(h.ResetLimits))
@@ -701,5 +711,35 @@ func TestSearchUsers(t *testing.T) {
 	}
 	if rec := serve(admin(), &fakeModels{}, "GET", "/api/admin/users?q="+strings.Repeat("x", 101), ""); rec.Code != 400 {
 		t.Fatalf("long query: %d", rec.Code)
+	}
+}
+
+func TestReorderCases(t *testing.T) {
+	const a, b = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+	s := admin()
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+b+`","`+a+`"]}`); rec.Code != 200 || len(s.order) != 2 || s.order[0] != b {
+		t.Fatalf("reorder: %d %s %v", rec.Code, rec.Body, s.order)
+	}
+	// Empty, duplicated or malformed lists never reach the store.
+	for name, body := range map[string]string{
+		"empty":     `{"case_ids":[]}`,
+		"duplicate": `{"case_ids":["` + a + `","` + a + `"]}`,
+		"not uuid":  `{"case_ids":["x"]}`,
+	} {
+		s := admin()
+		if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", body); rec.Code != 422 || s.order != nil {
+			t.Errorf("%s: status %d", name, rec.Code)
+		}
+	}
+	// A list that no longer matches the cases is a conflict.
+	s = admin()
+	s.err = ErrStaleOrder
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+a+`"]}`); rec.Code != 409 {
+		t.Fatalf("stale: %d", rec.Code)
+	}
+	// Players cannot reorder.
+	s = &fakeStore{}
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+a+`"]}`); rec.Code != 403 || s.order != nil {
+		t.Fatalf("non-admin: %d", rec.Code)
 	}
 }

@@ -4,7 +4,9 @@ import (
 	"backend/internal/testdb"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"backend/internal/admin"
@@ -213,5 +215,56 @@ func TestPGStore(t *testing.T) {
 	}
 	if _, err := ss.Update(ctx, settings.Settings{DailyTokens: 11, ResetTime: "04:30", Timezone: "UTC"}, ""); err == nil {
 		t.Fatal("11 daily tokens accepted by the database")
+	}
+}
+
+func TestPGStoreReorderCases(t *testing.T) {
+	uri := os.Getenv("TEST_POSTGRES_URI")
+	if uri == "" {
+		t.Skip("TEST_POSTGRES_URI not set")
+	}
+	ctx := context.Background()
+	pool := testdb.New(t, uri)
+	if err := db.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	s := admin.NewPGStore(pool) // a fresh database: no other cases
+	ids := make([]string, 3)
+	for i := range ids {
+		c, err := s.CreateCase(ctx, admin.CaseInput{Title: fmt.Sprintf("C%d", i), Synopsis: "S", DifficultyLevel: "easy", LLMModel: llm.DefaultModel})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[i] = c.ID
+	}
+	titles := func() string {
+		list, err := s.ListCases(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, c := range list {
+			out = append(out, c.Title)
+		}
+		return strings.Join(out, ",")
+	}
+	// A new case goes to the top.
+	if got := titles(); got != "C2,C1,C0" {
+		t.Fatalf("after create: %s", got)
+	}
+	if err := s.ReorderCases(ctx, []string{ids[1], ids[0], ids[2]}); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(); got != "C1,C0,C2" {
+		t.Fatalf("after reorder: %s", got)
+	}
+	// Missing or unknown cases are refused and change nothing.
+	for _, bad := range [][]string{{ids[0], ids[1]}, {ids[0], ids[1], "99999999-9999-9999-9999-999999999999"}} {
+		if err := s.ReorderCases(ctx, bad); !errors.Is(err, admin.ErrStaleOrder) {
+			t.Fatalf("%v: %v", bad, err)
+		}
+	}
+	if got := titles(); got != "C1,C0,C2" {
+		t.Fatalf("after refused reorder: %s", got)
 	}
 }

@@ -87,7 +87,7 @@ const listStories = `-- name: ListStories :many
 SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies
 FROM stories s
 WHERE s.is_published
-ORDER BY s.created_at DESC, s.id
+ORDER BY s.display_order, s.created_at DESC, s.id
 `
 
 type ListStoriesRow struct {
@@ -99,7 +99,7 @@ type ListStoriesRow struct {
 	RewardTrophies  int32
 }
 
-// Metadata for the dashboard cards, newest first. The same for every player (so it can be
+// Metadata for the dashboard cards, in the admin's order (display_order), then newest first. The same for every player (so it can be
 // cached and shared); how each player's own attempts ended is ListUserOutcomes.
 func (q *Queries) ListStories(ctx context.Context) ([]ListStoriesRow, error) {
 	rows, err := q.db.Query(ctx, listStories)

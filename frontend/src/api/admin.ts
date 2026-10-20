@@ -189,6 +189,11 @@ export const adminApi = createApi({
     updateAdminCase: build.mutation<AdminCase, { id: string } & Partial<AdminCaseFields>>({
       query: ({ id, ...body }) => ({ url: `/api/admin/cases/${id}`, method: 'PATCH', body }),
     }),
+    /** Sets the order of every case (first to last); the players' dashboard follows it. 409 if the list changed meanwhile. */
+    reorderAdminCases: build.mutation<{ case_ids: string[] }, string[]>({
+      query: (caseIds) => ({ url: '/api/admin/cases/order', method: 'PUT', body: { case_ids: caseIds } }),
+      invalidatesTags: ['AdminCases', 'Stories'],
+    }),
     deleteAdminCase: build.mutation<{ id: string }, string>({
       query: (id) => ({ url: `/api/admin/cases/${id}`, method: 'DELETE' }),
       invalidatesTags: ['AdminCases', 'Stories'],
@@ -225,6 +230,7 @@ export const adminApi = createApi({
 })
 
 export const {
+  useReorderAdminCasesMutation,
   useGetAdminConfigQuery,
   useUpdateAdminConfigMutation,
   useGetAdminModelsQuery,

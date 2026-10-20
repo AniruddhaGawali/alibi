@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { FieldError } from '@/components/ui/field'
 import AdminSection from './AdminSection'
 import SuspectCard from './SuspectCard'
+import SuspectOrder from './SuspectOrder'
 import { MIN_SUSPECTS, emptySuspect, type CaseFormValues } from './caseSchema'
 
 interface SuspectsSectionProps {
@@ -12,9 +13,9 @@ interface SuspectsSectionProps {
   disabled?: boolean
 }
 
-/** The dynamic list of suspects. Removed suspects are deleted when the case is saved. */
+/** The dynamic list of suspects, in the order players see them. Removed suspects are deleted when the case is saved. */
 export default function SuspectsSection({ control, setValue, disabled }: SuspectsSectionProps) {
-  const { fields, append, remove } = useFieldArray({ control, name: 'suspects', keyName: 'key' })
+  const { fields, append, remove, move } = useFieldArray({ control, name: 'suspects', keyName: 'key' })
   const { errors } = useFormState({ control, name: 'suspects' })
   const listError = errors.suspects?.root?.message ?? errors.suspects?.message
 
@@ -34,6 +35,7 @@ export default function SuspectsSection({ control, setValue, disabled }: Suspect
         <p className="text-sm text-muted-foreground">No suspects yet.</p>
       ) : (
         <div className="space-y-6">
+          {fields.length > 1 && <SuspectOrder control={control} onMove={move} disabled={disabled} />}
           {fields.map((f, i) => (
             <SuspectCard
               key={f.key}

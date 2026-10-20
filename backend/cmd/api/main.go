@@ -306,6 +306,7 @@ func run() error {
 	mux.HandleFunc("POST /api/admin/cases", hc.Invalidates(adminOnly(adminH.CreateCase), "catalog"))
 	mux.HandleFunc("GET /api/admin/cases/{id}", adminOnly(adminH.GetCase))
 	mux.HandleFunc("PATCH /api/admin/cases/{id}", hc.Invalidates(adminOnly(adminH.UpdateCase), "catalog"))
+	mux.HandleFunc("PUT /api/admin/cases/order", hc.Invalidates(adminOnly(adminH.ReorderCases), "catalog"))
 	mux.HandleFunc("DELETE /api/admin/cases/{id}", hc.Invalidates(adminOnly(adminH.DeleteCase), "catalog"))
 	mux.HandleFunc("GET /api/admin/cases/{id}/suspects", adminOnly(adminH.ListSuspects))
 	mux.HandleFunc("POST /api/admin/cases/{id}/suspects", hc.Invalidates(adminOnly(adminH.CreateSuspect), "catalog"))
