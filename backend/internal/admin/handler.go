@@ -59,7 +59,17 @@ type Handler struct {
 	images    storage.Provider             // nil: uploads answer 503
 	settings  SettingsService              // nil: the config routes answer 503
 	tokens    TokenGranter                 // nil: granting tokens answers 503
+	limits    LimitResetter                // nil: resetting limits answers 503
 }
+
+// LimitResetter clears one player's interrogation limits for today;
+// *interrogation.RedisGuard implements it.
+type LimitResetter interface {
+	ResetLimits(ctx context.Context, userID string) error
+}
+
+// WithLimitReset enables POST /api/admin/users/{id}/reset-limits.
+func WithLimitReset(l LimitResetter) Option { return func(h *Handler) { h.limits = l } }
 
 // TokenGranter adds question tokens to one player; *wallet.Service implements it.
 type TokenGranter interface {

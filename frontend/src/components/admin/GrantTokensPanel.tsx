@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { RiCoinsLine, RiSearchLine } from '@remixicon/react'
+import { RiCoinsLine, RiRestartLine, RiSearchLine } from '@remixicon/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FieldGroup } from '@/components/ui/field'
@@ -13,6 +13,7 @@ import { FormInput, FormSelect } from '@/components/form'
 import {
   MAX_TOKEN_BALANCE,
   useGrantAdminTokensMutation,
+  useResetAdminUserLimitsMutation,
   useSearchAdminUsersQuery,
   type AdminPlayer,
 } from '@/api/admin'
@@ -30,6 +31,10 @@ export default function GrantTokensPanel() {
   const [selectedId, setSelectedId] = useState<string>()
   const { data: players, isFetching, error } = useSearchAdminUsersQuery(q)
   const selected = players?.find((p) => p.id === selectedId)
+  const resetLimits = useResetAdminUserLimitsMutation({
+    onSuccess: (_r, id) => toast.success(`Interrogation limits reset for ${players?.find((p) => p.id === id)?.username ?? 'the player'}`),
+    onError: (e) => toast.error(e.message),
+  })
 
   const search = useForm<SearchValues>({ resolver: zodResolver(searchSchema), defaultValues: { q: '' } })
 
@@ -91,6 +96,16 @@ export default function GrantTokensPanel() {
                   >
                     <RiCoinsLine className="size-4" aria-hidden />
                     Give tokens
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => resetLimits.mutate(p.id)}
+                    disabled={resetLimits.isPending && resetLimits.variables === p.id}
+                    title="Clear today's interrogation limit so they can question suspects again"
+                  >
+                    <RiRestartLine className="size-4" aria-hidden />
+                    Reset limits
                   </Button>
                 </TableCell>
               </TableRow>
