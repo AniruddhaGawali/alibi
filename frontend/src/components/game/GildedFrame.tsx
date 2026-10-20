@@ -12,18 +12,20 @@ interface Pt {
   y: number
 }
 
-const THICKNESS = 34 // width of the moulding; the picture sits inside it
+const THICKNESS = 34 // width of the moulding at full size; the picture sits inside it
+const FULL_WIDTH = 640 // box width at and above which the frame is drawn at full size
+const MIN_SCALE = 0.55
 
 /**
  * A point on the outline of a w x h box pulled in by `inset`, with a rococo
  * ripple of amplitude `amp` and a swelling at each corner of size `bump`.
  */
-function outline(w: number, h: number, inset: number, amp: number, bump: number, phase: number): Pt[] {
+function outline(w: number, h: number, inset: number, amp: number, bump: number, phase: number, k: number): Pt[] {
   const out: Pt[] = []
   const step = 7
   const wave = (s: number, len: number) => {
-    const g = (d: number) => Math.exp(-((d / 38) ** 2))
-    return amp * Math.sin((2 * Math.PI * s) / 64 + phase) + bump * (g(s) + g(len - s))
+    const g = (d: number) => Math.exp(-((d / (38 * k)) ** 2))
+    return k * (amp * Math.sin((2 * Math.PI * s) / (64 * k) + phase) + bump * (g(s) + g(len - s)))
   }
   // top, right, bottom, left; every edge runs clockwise and `o` pushes outwards
   for (let s = 0; s < w; s += step) out.push({ x: s, y: inset - wave(s, w) })
@@ -83,15 +85,18 @@ export default function GildedFrame({ children, className }: { children: ReactNo
   }, [])
 
   const { w, h } = size
+  // narrow boxes get a proportionally slimmer moulding and smaller ornaments
+  const k = w > 0 ? Math.min(1, Math.max(MIN_SCALE, w / FULL_WIDTH)) : 1
+  const t = THICKNESS * k
   const ready = w > 0 && h > 0
-  const outer = ready ? closedPath(outline(w, h, 4, 4, 16, 0)) : ''
-  const carveA = ready ? closedPath(outline(w, h, 13, 3, 10, 1.4)) : ''
-  const carveB = ready ? closedPath(outline(w, h, 22, 2.4, 5, 3)) : ''
-  const hole = ready ? opening(w, h, THICKNESS, 22) : ''
-  const holeLip = ready ? opening(w, h, THICKNESS - 5, 25) : ''
+  const outer = ready ? closedPath(outline(w, h, 4 * k, 4, 16, 0, k)) : ''
+  const carveA = ready ? closedPath(outline(w, h, 13 * k, 3, 10, 1.4, k)) : ''
+  const carveB = ready ? closedPath(outline(w, h, 22 * k, 2.4, 5, 3, k)) : ''
+  const hole = ready ? opening(w, h, t, 22 * k) : ''
+  const holeLip = ready ? opening(w, h, t - 5 * k, 25 * k) : ''
 
   return (
-    <div ref={ref} className={cn('relative', className)} style={{ padding: THICKNESS }}>
+    <div ref={ref} className={cn('relative', className)} style={{ padding: t }}>
       {children}
       {ready && (
         <svg
@@ -140,12 +145,12 @@ export default function GildedFrame({ children, className }: { children: ReactNo
 
           {/* shell corners, crest and drop */}
           <g style={{ filter: 'drop-shadow(0 2px 3px rgb(0 0 0 / 65%))' }}>
-            <image href={cornerTl} x={-30} y={-30} width={92} height={92} />
-            <image href={cornerTr} x={w - 62} y={-30} width={92} height={92} />
-            <image href={cornerBl} x={-30} y={h - 62} width={92} height={92} />
-            <image href={cornerBr} x={w - 62} y={h - 62} width={92} height={92} />
-            <image href={crest} x={w / 2 - 95} y={-34} width={190} height={72} />
-            <image href={base} x={w / 2 - 55} y={h - 12} width={110} height={37} />
+            <image href={cornerTl} x={-30 * k} y={-30 * k} width={92 * k} height={92 * k} />
+            <image href={cornerTr} x={w - 62 * k} y={-30 * k} width={92 * k} height={92 * k} />
+            <image href={cornerBl} x={-30 * k} y={h - 62 * k} width={92 * k} height={92 * k} />
+            <image href={cornerBr} x={w - 62 * k} y={h - 62 * k} width={92 * k} height={92 * k} />
+            <image href={crest} x={w / 2 - 95 * k} y={-34 * k} width={190 * k} height={72 * k} />
+            <image href={base} x={w / 2 - 55 * k} y={h - 12 * k} width={110 * k} height={37 * k} />
           </g>
         </svg>
       )}

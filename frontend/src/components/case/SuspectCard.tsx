@@ -23,7 +23,7 @@ export default function SuspectCard({ suspect, chatLocked = false }: { suspect: 
   return (
     <article
       onClick={showLogs}
-      className="frame flex w-72 shrink-0 cursor-pointer snap-start flex-col gap-4 bg-card p-5 sm:w-80"
+      className="frame flex h-full cursor-pointer flex-col gap-4 bg-card p-5"
     >
       <div className="flex items-center gap-4">
         <Tooltip>
