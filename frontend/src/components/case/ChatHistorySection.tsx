@@ -49,7 +49,7 @@ export default function ChatHistorySection({ caseId }: { caseId: string }) {
         </Badge>
       </div>
 
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter logs by suspect">
+      <div className="no-scrollbar flex gap-2 overflow-x-auto p-1 pb-2 *:shrink-0" role="group" aria-label="Filter logs by suspect">
         <Pill active={filter === null} onClick={() => setFilter(null)}>
           All Logs
         </Pill>

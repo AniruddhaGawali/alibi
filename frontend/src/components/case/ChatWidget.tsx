@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { RiChat3Line } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useGetSuspectsQuery } from '@/api/cases'
 import ChatWindow from '@/components/chat/ChatWindow'
 import TokenCounter from '@/components/chat/TokenCounter'
@@ -46,15 +46,18 @@ export default function ChatWidget({ caseId, locked = false }: { caseId: string;
           {suspects && active && (
             <>
               <div className="space-y-3 border-b p-4">
-                <Tabs value={active.id} onValueChange={setActiveChatSuspect}>
-                  <TabsList className="h-auto w-full flex-wrap">
+                <Select value={active.id} onValueChange={setActiveChatSuspect}>
+                  <SelectTrigger className="w-full" aria-label="Suspect to interrogate">
+                    <SelectValue>{active.name}</SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
                     {suspects.map((s) => (
-                      <TabsTrigger key={s.id} value={s.id}>
+                      <SelectItem key={s.id} value={s.id}>
                         {s.name}
-                      </TabsTrigger>
+                      </SelectItem>
                     ))}
-                  </TabsList>
-                </Tabs>
+                  </SelectContent>
+                </Select>
                 <div className="flex items-center gap-3">
                   <span className="frame-portrait m-1">
                     <img src={active.avatar_url} alt="" className="size-16 object-cover" />
