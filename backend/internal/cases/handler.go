@@ -55,7 +55,8 @@ func caseID(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 // allowed enforces the Active Case Lock: a player locked into one case may not
-// read another case's dossier. Players with no lock may read any published case.
+// read another case's dossier, except one they have already closed (to read it back).
+// Players with no lock may read any published case.
 // It writes the error response itself.
 func (h *Handler) allowed(w http.ResponseWriter, r *http.Request, uid, id string) bool {
 	lock, err := h.store.Lock(r.Context(), uid)
@@ -65,6 +66,16 @@ func (h *Handler) allowed(w http.ResponseWriter, r *http.Request, uid, id string
 		return false
 	}
 	if lock != nil && lock.StoryID != id {
+		// a case they already closed stays readable while they work on another
+		_, err := h.store.Result(r.Context(), uid, id)
+		if err == nil {
+			return true
+		}
+		if !errors.Is(err, ErrNotFound) {
+			utils.LogErrorCtx(r.Context(), "load case result failed", "user_id", uid, "case_id", id, "err", err)
+			utils.ErrorResponse(w, http.StatusInternalServerError, "could not load the case", nil)
+			return false
+		}
 		utils.ErrorResponse(w, http.StatusForbidden, "Finish your active case first", nil)
 		return false
 	}
