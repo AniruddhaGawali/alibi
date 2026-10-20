@@ -14,12 +14,12 @@ const createUserWithIdentity = `-- name: CreateUserWithIdentity :one
 WITH new_user AS (
     INSERT INTO users (username, email, password_hash, token_balance)
     VALUES ($1, $2, $3, $4)
-    RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role
+    RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role, player_mode
 ), link AS (
     INSERT INTO user_identities (provider, subject, user_id, email)
     SELECT $5::text, $6::text, id, email FROM new_user
 )
-SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role FROM new_user
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role, player_mode FROM new_user
 `
 
 type CreateUserWithIdentityParams struct {
@@ -44,6 +44,7 @@ type CreateUserWithIdentityRow struct {
 	AvatarUrl     *string
 	AvatarPath    *string
 	Role          string
+	PlayerMode    string
 }
 
 // A provider sign-up: the user and the link are created in one statement, so there
@@ -71,12 +72,13 @@ func (q *Queries) CreateUserWithIdentity(ctx context.Context, arg CreateUserWith
 		&i.AvatarUrl,
 		&i.AvatarPath,
 		&i.Role,
+		&i.PlayerMode,
 	)
 	return i, err
 }
 
 const getUserByIdentity = `-- name: GetUserByIdentity :one
-SELECT u.id, u.username, u.email, u.password_hash, u.avatar_default, u.trophies, u.token_balance, u.created_at, u.cases_solved, u.avatar_url, u.avatar_path, u.role FROM users u
+SELECT u.id, u.username, u.email, u.password_hash, u.avatar_default, u.trophies, u.token_balance, u.created_at, u.cases_solved, u.avatar_url, u.avatar_path, u.role, u.player_mode FROM users u
 JOIN user_identities i ON i.user_id = u.id
 WHERE i.provider = $1 AND i.subject = $2
 `
@@ -102,6 +104,7 @@ func (q *Queries) GetUserByIdentity(ctx context.Context, arg GetUserByIdentityPa
 		&i.AvatarUrl,
 		&i.AvatarPath,
 		&i.Role,
+		&i.PlayerMode,
 	)
 	return i, err
 }

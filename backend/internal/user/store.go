@@ -30,6 +30,7 @@ type User struct {
 	AvatarURL     *string // public URL of the custom image in object storage
 	Trophies      int
 	Role          string // RoleUser or RoleAdmin
+	PlayerMode    string // ModeInvestigator or ModeMasterSleuth
 	CreatedAt     time.Time
 }
 
@@ -37,6 +38,13 @@ type User struct {
 const (
 	RoleUser  = "user"
 	RoleAdmin = "admin"
+)
+
+// Difficulty modes (users_player_mode_valid). Investigators get suspect backgrounds
+// and chat tips; master sleuths play with the initial testimony alone.
+const (
+	ModeInvestigator = "investigator"
+	ModeMasterSleuth = "master_sleuth"
 )
 
 // Store is the persistence the auth and profile handlers need.
@@ -53,6 +61,8 @@ type Store interface {
 	// SetAvatarCustom points the user at an uploaded image (public URL and
 	// object path). It returns the object path of the image it replaced ("" if none).
 	SetAvatarCustom(ctx context.Context, id, url, path string) (oldPath string, err error)
+	// SetPlayerMode stores the user's difficulty mode (ModeInvestigator or ModeMasterSleuth).
+	SetPlayerMode(ctx context.Context, id, mode string) error
 }
 
 // PGStore implements Store (and wallet.Store) on PostgreSQL. All SQL lives in
@@ -72,7 +82,7 @@ var ErrInsufficientTokens = errors.New("wallet: insufficient tokens")
 func fromRow(r dbgen.User) *User {
 	u := &User{
 		ID: r.ID, Username: r.Username, Email: r.Email, PasswordHash: r.PasswordHash,
-		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), Role: r.Role, CreatedAt: r.CreatedAt,
+		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), Role: r.Role, PlayerMode: r.PlayerMode, CreatedAt: r.CreatedAt,
 	}
 	if r.AvatarDefault != nil {
 		n := int(*r.AvatarDefault)
@@ -142,6 +152,17 @@ func (s *PGStore) SetAvatarCustom(ctx context.Context, id, url, path string) (st
 		return "", notFound(err)
 	}
 	return deref(old), nil
+}
+
+func (s *PGStore) SetPlayerMode(ctx context.Context, id, mode string) error {
+	n, err := s.q.SetPlayerMode(ctx, dbgen.SetPlayerModeParams{ID: id, PlayerMode: mode})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func deref(s *string) string {

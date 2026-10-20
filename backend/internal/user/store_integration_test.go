@@ -100,6 +100,23 @@ func TestPGStore(t *testing.T) {
 		t.Fatalf("unknown user: %v", err)
 	}
 
+	// Difficulty mode: investigator by default, CHECK-limited to the two modes.
+	if got.PlayerMode != user.ModeInvestigator {
+		t.Fatalf("default mode = %q", got.PlayerMode)
+	}
+	if err := s.SetPlayerMode(ctx, u.ID, user.ModeMasterSleuth); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+	if got, _ = s.GetByID(ctx, u.ID); got.PlayerMode != user.ModeMasterSleuth {
+		t.Fatalf("after set mode: %q", got.PlayerMode)
+	}
+	if err := s.SetPlayerMode(ctx, u.ID, "easy"); err == nil {
+		t.Fatal("mode easy should violate the CHECK constraint")
+	}
+	if err := s.SetPlayerMode(ctx, "00000000-0000-0000-0000-000000000000", user.ModeInvestigator); !errors.Is(err, user.ErrNotFound) {
+		t.Fatalf("mode for unknown user: %v", err)
+	}
+
 	// Token balance: atomic, never negative, never above 10.
 	if n, err := s.AdjustTokenBalance(ctx, u.ID, -4); err != nil || n != 6 {
 		t.Fatalf("spend: %d %v", n, err)

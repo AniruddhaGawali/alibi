@@ -4,7 +4,7 @@ import { ApiError } from '@/api/apiClient'
 import { appendExchange, isFreshMessage, useInterrogateMutation, useSuspectChatHistory } from '@/api/chat'
 import { invalidateTags } from '@/api/createApi'
 import { queryClient } from '@/api/queryClient'
-import type { Suspect } from '@/api/cases'
+import { useGetBriefingQuery, type Suspect } from '@/api/cases'
 import { useStickToBottom } from '@/hooks/useStickToBottom'
 import { useGameStore } from '@/store/useGameStore'
 import { timeAgo } from '@/utils/relativeTime'
@@ -34,6 +34,7 @@ export default function ChatWindow({ caseId, suspect }: { caseId: string; suspec
   const adjustTokens = useGameStore((s) => s.adjustTokenBalance)
   const setTokens = useGameStore((s) => s.setTokenBalance)
   const [attempts, setAttempts] = useState<Attempt[]>([])
+  const { data: briefing } = useGetBriefingQuery(caseId) // already cached by the case page
 
   const send = useInterrogateMutation({
     onMutate: () => adjustTokens(-1), // optimistic: pay now, settle when the server answers
@@ -110,6 +111,7 @@ export default function ChatWindow({ caseId, suspect }: { caseId: string; suspec
         suspectName={suspect.name}
         sending={send.isPending}
         onSend={(question) => send.mutate({ caseId, suspectId: suspect.id, question })}
+        tips={briefing?.chat_tips}
       />
     </div>
   )

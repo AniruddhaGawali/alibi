@@ -144,6 +144,7 @@ type createCaseReq struct {
 	PenaltyTrophies *int32   `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"` // taken for a wrong one; DefaultPenaltyTrophies when left out
 	Resolution      string   `json:"resolution" validate:"max=10000"`                      // reveals the truth once the case is closed
 	Hints           []string `json:"hints" validate:"max=3,dive,required,max=1000"`        // progressive hints, easiest first
+	ChatTips        []string `json:"chat_tips" validate:"max=5,dive,required,max=300"`     // public tips for investigators
 	IsPublished     bool     `json:"is_published"`                                         // false (a draft) when left out
 	LLMModel        string   `json:"llm_model" validate:"omitempty,max=100"`               // llm.DefaultModel when left out
 	MusicTrack      string   `json:"music_track"`                                          // a MusicTracks key; "" (left out) plays the main theme
@@ -158,7 +159,8 @@ type updateCaseReq struct {
 	RewardTrophies  *int32    `json:"reward_trophies" validate:"omitempty,min=0,max=1000"`
 	PenaltyTrophies *int32    `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"`
 	Resolution      *string   `json:"resolution" validate:"omitempty,max=10000"`
-	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"` // [] clears them
+	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"`    // [] clears them
+	ChatTips        *[]string `json:"chat_tips" validate:"omitempty,max=5,dive,required,max=300"` // [] clears them
 	IsPublished     *bool     `json:"is_published"`
 	LLMModel        *string   `json:"llm_model" validate:"omitempty,max=100"`
 	MusicTrack      *string   `json:"music_track"` // "" switches back to the main theme
@@ -217,7 +219,7 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.CreateCase(r.Context(), CaseInput{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: penalty, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack, ChatTips: req.ChatTips,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "case", "create case failed")
@@ -247,14 +249,17 @@ func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 	if req.LLMModel != nil && !h.checkModel(w, r, *req.LLMModel) {
 		return
 	}
-	var hints []string
+	var hints, tips []string
 	if req.Hints != nil {
 		hints = append([]string{}, *req.Hints...)
+	}
+	if req.ChatTips != nil {
+		tips = append([]string{}, *req.ChatTips...)
 	}
 	c, old, err := h.store.UpdateCase(r.Context(), id, CasePatch{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: req.PenaltyTrophies, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack, ChatTips: tips,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "case", "update case failed")

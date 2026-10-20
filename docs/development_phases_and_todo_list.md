@@ -161,6 +161,16 @@
 - [x] **Frontend:** Admin panel under `/admin` (`AdminLayout` lets only admins in): case list with status, readiness and delete; global settings form; long-scroll case builder (basic info, thumbnail, main case file, resolution, 3 progressive hints, dynamic suspect cards with avatar, testimony, culprit switch and AI persona, scene images, publish) saved in one go by `useSaveCase` with "Save as draft" / "Save & publish" ("Move to draft" / "Save" for a live case). The AI model is a searchable dropdown fed by `GET /api/admin/models` (only text models within the price cap), so ids cannot be mistyped.
 - [x] **Admin:** Give tokens to one player from the settings page: `GET /api/admin/users?q=` finds players by username or email, `POST /api/admin/users/{id}/tokens` adds 1-10 (capped at the 10 a player can hold; the daily reset still applies).
 
+### P5.4 Difficulty Modes (Go & React)
+- [x] **Backend:** `users.player_mode` (`investigator` default / `master_sleuth`, migration 00022, CHECK `users_player_mode_valid`) returned as `player_mode` by `GET /api/user/profile` and changed with `PUT /api/user/mode {mode}` (invalidates the cached profile).
+- [x] **Backend:** `suspects.public_knowledge` (TEXT, '' default) on the admin suspect CRUD (`POST`/`PATCH /api/admin/cases/{id}/suspects`) and in the player's `GET /api/cases/{id}/suspects`. It is public: every player receives it and the frontend shows it only to investigators.
+- [x] **Frontend:** `useGameStore.playerMode`, mirrored from the profile by `useSyncPlayerMode` (in `Layout`) and changed optimistically by `PlayerModeForm`. New players go avatar (`/onboarding/avatar?new=1`) → "Select your badge" (`/onboarding/mode`) → dashboard.
+- [x] **Frontend:** Profile menu → Settings submenu with "Change avatar" and "Change difficulty mode", each opening a dialog (`components/settings/SettingsDialog`). The menu shows the current mode.
+- [x] **Frontend:** Case page suspect cards show a "Public knowledge" block, and the chat input shows a pinned detective tip, for investigators only. Admin suspect form has the "Public Knowledge / Suspect Background" field above the initial testimony.
+- [x] **Per-case detective tips:** `stories.chat_tips` (up to 5, migration 00023) set in the admin case builder ("Story & progression" → "Detective tips", `chat_tips` on `POST`/`PATCH /api/admin/cases`, max 300 chars each, `[]` clears), sent in the briefing, and shown one at random under the chat box to investigators; a case without tips uses the generic ones.
+- [x] **Frontend:** Landing page "Choose your badge" section (`ModesBand`); handbook (`/how-to-play`) "Difficulty modes" section and an illustrated "Step by step: your first case" walkthrough (`components/rules/Walkthrough.tsx`). Screenshots load from the bucket at `guide/*.webp` (list in `frontend/public/guide/README.md`) and show a placeholder until uploaded.
+- [ ] **Content:** take and upload the 10 handbook screenshots (`frontend/public/guide/README.md`, then `make assets-upload`).
+
 ---
 
 ## Game UI Polish (cross-phase)

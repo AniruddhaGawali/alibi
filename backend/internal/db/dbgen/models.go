@@ -69,6 +69,7 @@ type Story struct {
 	Resolution      string
 	Hints           []string
 	MusicTrack      string
+	ChatTips        []string
 }
 
 type Suspect struct {
@@ -86,6 +87,7 @@ type Suspect struct {
 	HiddenTruth          string
 	ConfessionTriggers   string
 	ConfessionKeywords   []string
+	PublicKnowledge      string
 }
 
 type User struct {
@@ -101,6 +103,7 @@ type User struct {
 	AvatarUrl     *string
 	AvatarPath    *string
 	Role          string
+	PlayerMode    string
 }
 
 type UserIdentity struct {

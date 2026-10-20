@@ -26,6 +26,7 @@ export const routes: RouteObject[] = [
           { path: '/dashboard', lazy: async () => ({ Component: (await import('../pages/DashboardPage')).default }) },
           { path: '/case/:id', lazy: async () => ({ Component: (await import('../pages/CasePage')).default }) },
           { path: '/onboarding/avatar', lazy: async () => ({ Component: (await import('../pages/AvatarOnboardingPage')).default }) },
+          { path: '/onboarding/mode', lazy: async () => ({ Component: (await import('../pages/ModeOnboardingPage')).default }) },
           {
             // Admin panel (P5.3). AdminLayout sends non-admins back to the game.
             path: '/admin',

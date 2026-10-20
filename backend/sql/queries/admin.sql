@@ -3,11 +3,11 @@ SELECT role FROM users WHERE id = @id;
 
 -- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips)
 VALUES (@title, @synopsis, @main_plot, @thumbnail_url, @difficulty_level,
-        @reward_trophies, @penalty_trophies, @resolution, @hints::text[], @is_published, @llm_model, @music_track)
+        @reward_trophies, @penalty_trophies, @resolution, @hints::text[], @is_published, @llm_model, @music_track, @chat_tips::text[])
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at;
+          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips;
 
 -- name: AdminUpdateCase :one
 -- Partial update: a NULL parameter keeps the current value. old_thumbnail_url is the
@@ -25,12 +25,13 @@ UPDATE stories s SET
     hints            = COALESCE(sqlc.narg('hints')::text[], s.hints),
     is_published     = COALESCE(sqlc.narg('is_published')::boolean, s.is_published),
     llm_model        = COALESCE(sqlc.narg('llm_model')::text, s.llm_model),
-    music_track      = COALESCE(sqlc.narg('music_track')::text, s.music_track)
+    music_track      = COALESCE(sqlc.narg('music_track')::text, s.music_track),
+    chat_tips        = COALESCE(sqlc.narg('chat_tips')::text[], s.chat_tips)
 FROM old
 WHERE s.id = old.id
 RETURNING s.id, s.title, s.synopsis, s.main_plot, s.thumbnail_url, s.difficulty_level,
           s.reward_trophies, s.penalty_trophies, s.resolution, s.hints, s.is_published, s.llm_model, s.music_track, s.created_at,
-          old.thumbnail_url AS old_thumbnail_url;
+          s.chat_tips, old.thumbnail_url AS old_thumbnail_url;
 
 -- name: AdminListCases :many
 -- Every case, drafts included, newest first, with what the list page needs to show
@@ -45,7 +46,7 @@ ORDER BY s.created_at DESC, s.id;
 
 -- name: AdminGetCase :one
 SELECT id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-       reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at
+       reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips
 FROM stories
 WHERE id = @id;
 
@@ -80,7 +81,7 @@ SELECT EXISTS (SELECT 1 FROM stories WHERE id = @id) AS found;
 -- name: AdminListSuspects :many
 -- Admins see everything, secrets included. Never use this for a player response.
 SELECT id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-       relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords
+       relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords, public_knowledge
 FROM suspects
 WHERE case_id = @case_id
 ORDER BY display_order, name;
@@ -93,11 +94,13 @@ WHERE case_id = @case_id AND is_culprit AND id <> COALESCE(sqlc.narg('keep_id'):
 
 -- name: AdminCreateSuspect :one
 INSERT INTO suspects (case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-                      relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords)
+                      relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords,
+                      public_knowledge)
 VALUES (@case_id, @name, @role, @avatar_url, @initial_testimony, @is_culprit, @display_order,
-        @relationship_to_victim, @persona, @public_alibi, @hidden_truth, @confession_triggers, @confession_keywords::text[])
+        @relationship_to_victim, @persona, @public_alibi, @hidden_truth, @confession_triggers, @confession_keywords::text[],
+        @public_knowledge)
 RETURNING id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-          relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords;
+          relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords, public_knowledge;
 
 -- name: AdminUpdateSuspect :one
 -- Partial update like AdminUpdateCase; old_avatar_url is the value before it.
@@ -107,6 +110,7 @@ UPDATE suspects s SET
     role                   = COALESCE(sqlc.narg('role')::text, s.role),
     avatar_url             = COALESCE(sqlc.narg('avatar_url')::text, s.avatar_url),
     initial_testimony      = COALESCE(sqlc.narg('initial_testimony')::text, s.initial_testimony),
+    public_knowledge       = COALESCE(sqlc.narg('public_knowledge')::text, s.public_knowledge),
     is_culprit             = COALESCE(sqlc.narg('is_culprit')::boolean, s.is_culprit),
     display_order          = COALESCE(sqlc.narg('display_order')::int, s.display_order),
     relationship_to_victim = COALESCE(sqlc.narg('relationship_to_victim')::text, s.relationship_to_victim),
@@ -119,7 +123,7 @@ FROM old
 WHERE s.id = old.id
 RETURNING s.id, s.case_id, s.name, s.role, s.avatar_url, s.initial_testimony, s.is_culprit, s.display_order,
           s.relationship_to_victim, s.persona, s.public_alibi, s.hidden_truth, s.confession_triggers, s.confession_keywords,
-          old.avatar_url AS old_avatar_url;
+          s.public_knowledge, old.avatar_url AS old_avatar_url;
 
 -- name: AdminDeleteSuspect :one
 DELETE FROM suspects WHERE id = @id AND case_id = @case_id

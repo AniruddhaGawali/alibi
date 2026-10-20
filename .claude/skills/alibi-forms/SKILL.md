@@ -18,6 +18,7 @@ Import from `@/components/form`. All take `control` and `name` (typed to your sc
 | `FormSelect` | one choice from a short list | `options: {value,label}[]`, `placeholder`, `disabled` |
 | `FormCombobox` | one choice from a long, searchable list (AI models) | `options: {value,label,hint?,keywords?}[]`, `searchPlaceholder`, `emptyText` |
 | `FormRadioGroup` | few visible choices (avatars, suspect pick) | `options` |
+| `FormChoiceCards` | 2-4 choices that each need an explanation (difficulty mode) | `options: {value,label,description,icon?}[]` |
 | `FormCheckbox` | boolean consent / agree | `label` required |
 | `FormSwitch` | boolean setting | `label` required, `onCheckedChange` (e.g. switch off a competing field) |
 | `FormFile` | one file, value is a `File` | `onFileChange` |

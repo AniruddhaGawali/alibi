@@ -20,6 +20,8 @@ export interface Briefing {
   scenes: Scene[]
   /** How many hints the case has. */
   hints_total: number
+  /** The case's detective tips for investigators; empty = the generic ones. */
+  chat_tips: string[]
 }
 
 /** GET /api/cases/{id}/hints: what this player has revealed (per player, so not part of the briefing). */
@@ -44,6 +46,8 @@ export interface Suspect {
   role: string
   avatar_url: string
   initial_testimony: string
+  /** Background the town already knows ('' when the case has none). Shown to investigators only. */
+  public_knowledge: string
 }
 
 /** POST /api/cases/{id}/start: `case_id` is this play-through, `story_id` the case. */

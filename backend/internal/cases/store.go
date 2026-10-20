@@ -58,6 +58,9 @@ type Briefing struct {
 	// HintsTotal is how many hints the case has. What a player has revealed is per player
 	// and lives in HintState, so the briefing is the same for everyone and can be cached.
 	HintsTotal int `json:"hints_total"`
+	// ChatTips are the case's public detective tips (may be empty); the frontend shows
+	// one under the chat box to investigators.
+	ChatTips []string `json:"chat_tips"`
 }
 
 // HintState is how many hints the caller has revealed in their current play-through and
@@ -88,6 +91,9 @@ type Suspect struct {
 	Role             string `json:"role"`
 	AvatarURL        string `json:"avatar_url"`
 	InitialTestimony string `json:"initial_testimony"`
+	// PublicKnowledge is background the town already knows (may be ""). Every player
+	// receives it; only investigators are shown it, so it must never hold a secret.
+	PublicKnowledge string `json:"public_knowledge"`
 }
 
 // Lock is a user's active case lock.
@@ -176,7 +182,10 @@ func (s *PGStore) Briefing(ctx context.Context, id string) (*Briefing, error) {
 	b := &Briefing{
 		ID: row.ID, Title: row.Title, Synopsis: row.Synopsis, MainPlot: row.MainPlot,
 		DifficultyLevel: row.DifficultyLevel, RewardTrophies: int(row.RewardTrophies),
-		Scenes: make([]Scene, 0, len(scenes)), HintsTotal: int(row.HintsTotal),
+		Scenes: make([]Scene, 0, len(scenes)), HintsTotal: int(row.HintsTotal), ChatTips: row.ChatTips,
+	}
+	if b.ChatTips == nil {
+		b.ChatTips = []string{}
 	}
 	for _, sc := range scenes {
 		b.Scenes = append(b.Scenes, Scene{ID: sc.ID, SceneName: sc.SceneName, ImageURL: sc.ImageUrl, DisplayOrder: int(sc.DisplayOrder)})
@@ -238,7 +247,7 @@ func (s *PGStore) Suspects(ctx context.Context, id string) ([]Suspect, error) {
 	}
 	out := make([]Suspect, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Suspect{ID: r.ID, Name: r.Name, Role: r.Role, AvatarURL: r.AvatarUrl, InitialTestimony: r.InitialTestimony})
+		out = append(out, Suspect{ID: r.ID, Name: r.Name, Role: r.Role, AvatarURL: r.AvatarUrl, InitialTestimony: r.InitialTestimony, PublicKnowledge: r.PublicKnowledge})
 	}
 	return out, nil
 }
