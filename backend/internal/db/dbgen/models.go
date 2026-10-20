@@ -70,6 +70,7 @@ type Story struct {
 	Hints           []string
 	MusicTrack      string
 	ChatTips        []string
+	DisplayOrder    int32
 }
 
 type Suspect struct {

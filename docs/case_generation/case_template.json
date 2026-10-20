@@ -1,0 +1,47 @@
+{
+  "title": "<case title, max 200 chars, e.g. The Crooked House Murders>",
+  "synopsis": "<1-3 sentence teaser for the dashboard card, max 2000 chars, no spoilers>",
+  "difficulty_level": "<easy | medium | hard>",
+  "reward_trophies": 10,
+  "penalty_trophies": 5,
+  "music_track": "<'' for the main theme, or one of: detective-caution | bloodmoney | too-crazy | solving-the-crime>",
+  "thumbnail_image_prompt": "<NOT an API field: a prompt for an image generator, 16:9 dashboard art for this case>",
+  "main_plot": "<the full case file shown to the player and known by every suspect, max 10000 chars: victim, place, time of death, how the body was found, the known facts and timeline. Never reveal the culprit>",
+  "resolution": "<revealed only after the accusation, max 10000 chars: who did it, how, why, and which clues pointed to them>",
+  "hints": [
+    "<hint 1, easiest, max 1000 chars: points the player in a direction without naming the culprit>",
+    "<hint 2, more specific, max 1000 chars>",
+    "<hint 3, strongest, max 1000 chars: almost gives it away>"
+  ],
+  "chat_tips": [
+    "<tip 1, max 300 chars: a free interrogation nudge for investigators, e.g. Ask each suspect when they last heard the clock chime.>",
+    "<tip 2, max 300 chars>",
+    "<tip 3, max 300 chars>",
+    "<tip 4, max 300 chars>",
+    "<tip 5, max 300 chars>"
+  ],
+  "scenes": [
+    {
+      "scene_name": "<scene title, max 200 chars, e.g. The Study>",
+      "image_prompt": "<NOT an API field: a prompt for an image generator, landscape crime-scene picture>"
+    }
+  ],
+  "suspects": [
+    {
+      "name": "<full name, max 100 chars, e.g. Sophia Leonides>",
+      "role": "<role in the household, max 200 chars, e.g. Granddaughter & Sole Heir>",
+      "relationship_to_victim": "<max 500 chars, e.g. his granddaughter>",
+      "avatar_image_prompt": "<NOT an API field: a prompt for an image generator, square portrait of this suspect>",
+      "public_knowledge": "<max 4000 chars: background the whole town knows. Shown to investigator players and known to every other suspect. Never a secret>",
+      "initial_testimony": "<required, max 4000 chars: their first statement to the police, in their own voice, shown to the player>",
+      "is_culprit": false,
+      "persona": "<max 4000 chars: personality and manner of speaking; other suspects know it too>",
+      "public_alibi": "<max 4000 chars: the account they give the detective of where they were>",
+      "hidden_truth": "<max 6000 chars: what they really did and hide. Required for the culprit. Innocent suspects should hide something too (an affair, a debt, a lie about the time)>",
+      "confession_triggers": "<max 4000 chars: what the detective must bring up for them to crack and admit the hidden truth>",
+      "confession_keywords": [
+        "<lower-case word starts, 2-40 letters/digits each, joined by + for 'all of these', max 5 per group, max 30 groups, e.g. last+study or receipt>"
+      ]
+    }
+  ]
+}

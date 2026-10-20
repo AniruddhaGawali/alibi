@@ -33,6 +33,9 @@ var (
 	// ErrNeedsKeywords means a suspect has a hidden truth or confession triggers but
 	// no confession keywords, so their secrets would be in every prompt.
 	ErrNeedsKeywords = errors.New("admin: secrets need confession keywords")
+	// ErrStaleOrder means a new order did not list every case exactly once (one was
+	// added or deleted since the list was loaded).
+	ErrStaleOrder = errors.New("admin: case order does not match the cases")
 )
 
 // MinSuspects is how many suspects a published case needs.
@@ -184,6 +187,9 @@ type Store interface {
 	UpdateCase(ctx context.Context, id string, p CasePatch) (c *Case, oldThumbnail string, err error)
 	// DeleteCase returns ErrInUse when anyone has played or is playing it.
 	DeleteCase(ctx context.Context, id string) (images []string, err error)
+	// ReorderCases sets the order of all cases (ids first to last). It returns
+	// ErrStaleOrder unless ids holds every case exactly once.
+	ReorderCases(ctx context.Context, ids []string) error
 
 	CreateSuspect(ctx context.Context, caseID string, in SuspectInput) (*Suspect, error)
 	UpdateSuspect(ctx context.Context, caseID, id string, p SuspectPatch) (s *Suspect, oldAvatar string, err error)
@@ -218,6 +224,26 @@ func (s *PGStore) tx(ctx context.Context, fn func(q *dbgen.Queries) error) error
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *PGStore) ReorderCases(ctx context.Context, ids []string) error {
+	return s.tx(ctx, func(q *dbgen.Queries) error {
+		total, err := q.AdminCountCases(ctx)
+		if err != nil {
+			return err
+		}
+		if int(total) != len(ids) {
+			return ErrStaleOrder
+		}
+		n, err := q.AdminReorderCases(ctx, ids)
+		if err != nil {
+			return err
+		}
+		if n != int64(total) { // an unknown id (the handler already refuses duplicates)
+			return ErrStaleOrder
+		}
+		return nil
+	})
 }
 
 func (s *PGStore) Role(ctx context.Context, userID string) (string, error) {

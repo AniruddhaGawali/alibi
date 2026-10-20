@@ -3,9 +3,11 @@ SELECT role FROM users WHERE id = @id;
 
 -- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips, display_order)
 VALUES (@title, @synopsis, @main_plot, @thumbnail_url, @difficulty_level,
-        @reward_trophies, @penalty_trophies, @resolution, @hints::text[], @is_published, @llm_model, @music_track, @chat_tips::text[])
+        @reward_trophies, @penalty_trophies, @resolution, @hints::text[], @is_published, @llm_model, @music_track, @chat_tips::text[],
+        -- a new case goes to the top of the list, like before cases had an order
+        (SELECT COALESCE(min(display_order), 1) - 1 FROM stories))
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
           reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips;
 
@@ -34,7 +36,7 @@ RETURNING s.id, s.title, s.synopsis, s.main_plot, s.thumbnail_url, s.difficulty_
           s.chat_tips, old.thumbnail_url AS old_thumbnail_url;
 
 -- name: AdminListCases :many
--- Every case, drafts included, newest first, with what the list page needs to show
+-- Every case, drafts included, in display order (then newest first), with what the list page needs to show
 -- whether it is ready to publish.
 SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_trophies,
        s.penalty_trophies, s.is_published, s.llm_model, s.music_track, s.created_at,
@@ -42,7 +44,7 @@ SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_
        (SELECT count(*) FROM suspects p WHERE p.case_id = s.id AND p.is_culprit)::int AS culprit_count,
        (SELECT count(*) FROM case_results r WHERE r.story_id = s.id)::int             AS plays
 FROM stories s
-ORDER BY s.created_at DESC, s.id;
+ORDER BY s.display_order, s.created_at DESC, s.id;
 
 -- name: AdminGetCase :one
 SELECT id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
@@ -190,3 +192,13 @@ LIMIT @lim::int;
 SELECT id, username, email, role, token_balance, trophies, created_at
 FROM users
 WHERE id = @id;
+
+-- name: AdminCountCases :one
+SELECT count(*)::int FROM stories;
+
+-- name: AdminReorderCases :execrows
+-- Gives each listed case its position in the list (1, 2, ...). The store runs it in a
+-- transaction and checks that every case was listed, so no two cases share a position.
+UPDATE stories s SET display_order = o.ord::int
+FROM unnest(@ids::uuid[]) WITH ORDINALITY AS o(id, ord)
+WHERE s.id = o.id;

@@ -22,6 +22,7 @@ type Persona struct {
 	Role               string
 	Relationship       string // to the victim
 	Persona            string // public personality
+	PublicKnowledge    string // background the whole town knows (players see it in investigator mode)
 	PublicAlibi        string
 	HiddenTruth        string
 	ConfessionTriggers string
@@ -34,15 +35,16 @@ type Persona struct {
 // public facts only. It has no field for secrets, so none can leak into a
 // different suspect's prompt.
 type Acquaintance struct {
-	Name         string
-	Role         string
-	Relationship string
-	Persona      string
+	Name            string
+	Role            string
+	Relationship    string
+	Persona         string
+	PublicKnowledge string // public background, the same text players may see
 }
 
 // AcquaintanceOf strips a persona down to what the other suspects may know.
 func AcquaintanceOf(p Persona) Acquaintance {
-	return Acquaintance{Name: p.Name, Role: p.Role, Relationship: p.Relationship, Persona: p.Persona}
+	return Acquaintance{Name: p.Name, Role: p.Role, Relationship: p.Relationship, Persona: p.Persona, PublicKnowledge: p.PublicKnowledge}
 }
 
 // BuildSystemPrompt concatenates the three sections of a suspect's system prompt:
@@ -70,6 +72,11 @@ func writePersona(b *strings.Builder, c CaseInfo, p Persona, unlocked bool) {
 	}
 	if p.Persona != "" {
 		fmt.Fprintf(b, "Your personality and manner of speaking: %s\n", p.Persona)
+	}
+	if p.PublicKnowledge != "" {
+		// The detective may have read this in the case file: denying it would break the story.
+		fmt.Fprintf(b, "What everyone, the detective included, already knows about you: %s\n"+
+			"Never deny these facts. You may explain them, play them down or get defensive about them.\n", p.PublicKnowledge)
 	}
 	if c.Plot != "" {
 		fmt.Fprintf(b, "\nWhat everyone knows about the case:\n%s\n", c.Plot)
@@ -122,6 +129,9 @@ func writeAcquaintances(b *strings.Builder, p Persona, others []Acquaintance) {
 		}
 		if o.Persona != "" {
 			fmt.Fprintf(b, "; known as: %s", o.Persona)
+		}
+		if o.PublicKnowledge != "" {
+			fmt.Fprintf(b, "; common knowledge about them: %s", o.PublicKnowledge)
 		}
 		b.WriteString("\n")
 	}

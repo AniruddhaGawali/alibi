@@ -229,6 +229,25 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	utils.SuccessResponse(w, http.StatusCreated, c)
 }
 
+type reorderCasesReq struct {
+	CaseIDs []string `json:"case_ids" validate:"required,min=1,max=1000,unique,dive,uuid"`
+}
+
+// ReorderCases handles PUT /api/admin/cases/order: case_ids lists every case, first to
+// last. The players' dashboard shows the published ones in this order.
+func (h *Handler) ReorderCases(w http.ResponseWriter, r *http.Request) {
+	var req reorderCasesReq
+	if !utils.BindAndValidate(w, r, &req) {
+		return
+	}
+	if err := h.store.ReorderCases(r.Context(), req.CaseIDs); err != nil {
+		h.storeFailed(w, r, err, "case order", "reorder cases failed")
+		return
+	}
+	utils.LogInfoCtx(r.Context(), "cases reordered", "admin_id", h.userID(r.Context()), "cases", len(req.CaseIDs))
+	utils.SuccessResponse(w, http.StatusOK, map[string][]string{"case_ids": req.CaseIDs})
+}
+
 // UpdateCase handles PATCH /api/admin/cases/{id}. Only the fields sent change.
 func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
@@ -334,6 +353,8 @@ func (h *Handler) storeFailed(w http.ResponseWriter, r *http.Request, err error,
 	case errors.Is(err, ErrNotReady):
 		utils.ErrorResponse(w, http.StatusConflict, "a published case needs at least 2 suspects and exactly one culprit",
 			map[string]string{"is_published": "needs at least 2 suspects and exactly one culprit"})
+	case errors.Is(err, ErrStaleOrder):
+		utils.ErrorResponse(w, http.StatusConflict, "the case list changed since you loaded it; reload and try again", nil)
 	case errors.Is(err, ErrNeedsKeywords):
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
 			map[string]string{"confession_keywords": "add at least one keyword, or the secrets are in the prompt from the first question"})

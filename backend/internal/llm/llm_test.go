@@ -336,3 +336,22 @@ func TestUnlocked(t *testing.T) {
 		t.Error("a suspect without keywords is always unlocked")
 	}
 }
+
+func TestPromptHasPublicKnowledge(t *testing.T) {
+	maid := Persona{Name: "Beatrice", Role: "The Maid", PublicKnowledge: "PK-B owes money to the cook", HiddenTruth: "SECRET-B", IsCulprit: true}
+	butler := Persona{Name: "Thomas", Role: "The Butler", PublicKnowledge: "PK-T was once a soldier", HiddenTruth: "SECRET-T"}
+	// The suspect's own public knowledge is in the prompt even while locked, with the "do not deny" rule.
+	locked := BuildSystemPrompt(CaseInfo{Title: "T"}, maid, []Acquaintance{AcquaintanceOf(butler)}, false)
+	for _, want := range []string{"already knows about you: PK-B owes money to the cook", "Never deny these facts", "common knowledge about them: PK-T was once a soldier"} {
+		if !strings.Contains(locked, want) {
+			t.Errorf("prompt is missing %q:\n%s", want, locked)
+		}
+	}
+	if strings.Contains(locked, "SECRET-T") {
+		t.Error("another suspect's secret leaked through AcquaintanceOf")
+	}
+	// Empty public knowledge adds nothing.
+	if p := BuildSystemPrompt(CaseInfo{Title: "T"}, Persona{Name: "A"}, []Acquaintance{{Name: "B"}}, false); strings.Contains(p, "already knows about you") || strings.Contains(p, "common knowledge") {
+		t.Errorf("empty public knowledge still wrote a line:\n%s", p)
+	}
+}

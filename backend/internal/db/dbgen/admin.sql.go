@@ -99,11 +99,24 @@ func (q *Queries) AdminClearCulprit(ctx context.Context, arg AdminClearCulpritPa
 	return err
 }
 
+const adminCountCases = `-- name: AdminCountCases :one
+SELECT count(*)::int FROM stories
+`
+
+func (q *Queries) AdminCountCases(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, adminCountCases)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const adminCreateCase = `-- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips, display_order)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9::text[], $10, $11, $12, $13::text[])
+        $6, $7, $8, $9::text[], $10, $11, $12, $13::text[],
+        -- a new case goes to the top of the list, like before cases had an order
+        (SELECT COALESCE(min(display_order), 1) - 1 FROM stories))
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
           reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips
 `
@@ -411,7 +424,7 @@ SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_
        (SELECT count(*) FROM suspects p WHERE p.case_id = s.id AND p.is_culprit)::int AS culprit_count,
        (SELECT count(*) FROM case_results r WHERE r.story_id = s.id)::int             AS plays
 FROM stories s
-ORDER BY s.created_at DESC, s.id
+ORDER BY s.display_order, s.created_at DESC, s.id
 `
 
 type AdminListCasesRow struct {
@@ -431,7 +444,7 @@ type AdminListCasesRow struct {
 	Plays           int32
 }
 
-// Every case, drafts included, newest first, with what the list page needs to show
+// Every case, drafts included, in display order (then newest first), with what the list page needs to show
 // whether it is ready to publish.
 func (q *Queries) AdminListCases(ctx context.Context) ([]AdminListCasesRow, error) {
 	rows, err := q.db.Query(ctx, adminListCases)
@@ -544,6 +557,22 @@ func (q *Queries) AdminListSuspects(ctx context.Context, caseID string) ([]Suspe
 		return nil, err
 	}
 	return items, nil
+}
+
+const adminReorderCases = `-- name: AdminReorderCases :execrows
+UPDATE stories s SET display_order = o.ord::int
+FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, ord)
+WHERE s.id = o.id
+`
+
+// Gives each listed case its position in the list (1, 2, ...). The store runs it in a
+// transaction and checks that every case was listed, so no two cases share a position.
+func (q *Queries) AdminReorderCases(ctx context.Context, ids []string) (int64, error) {
+	result, err := q.db.Exec(ctx, adminReorderCases, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const adminSearchUsers = `-- name: AdminSearchUsers :many
