@@ -70,7 +70,7 @@ export default function SuspectCard({ control, setValue, index, count, onRemove,
           control={control}
           name={`${p}.public_knowledge`}
           label="Public Knowledge / Suspect Background (shown only in Investigator mode)"
-          description="What the town already knows about them. Every player's browser receives it, so never put a secret here."
+          description="What the town already knows about them. The suspect never denies it and the other suspects know it too. Every player's browser receives it, so never put a secret here."
           rows={3}
         />
         <FormTextarea

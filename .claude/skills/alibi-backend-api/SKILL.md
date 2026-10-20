@@ -126,7 +126,7 @@ A case is played once. The accusation transaction inserts a `case_results` row; 
 
 ## Difficulty modes
 
-`users.player_mode` (`user.ModeInvestigator` / `user.ModeMasterSleuth`) is a display preference only: `PUT /api/user/mode` sets it and the profile returns it, but no player endpoint serves different data per mode (that keeps the shared and browser caches valid). `suspects.public_knowledge` therefore reaches every player and is filtered in the frontend, so it must never hold a secret. The same goes for `stories.chat_tips` (up to 5 admin-written detective tips, sent in the shared briefing).
+`users.player_mode` (`user.ModeInvestigator` / `user.ModeMasterSleuth`) is a display preference only: `PUT /api/user/mode` sets it and the profile returns it, but no player endpoint serves different data per mode (that keeps the shared and browser caches valid). `suspects.public_knowledge` therefore reaches every player and is filtered in the frontend, so it must never hold a secret. It is also in the LLM prompts: the suspect's own ("never deny these facts", present even while locked) and, via `llm.Acquaintance.PublicKnowledge`, every other suspect's. The same goes for `stories.chat_tips` (up to 5 admin-written detective tips, sent in the shared briefing).
 
 ## Response cache (`internal/httpcache`)
 

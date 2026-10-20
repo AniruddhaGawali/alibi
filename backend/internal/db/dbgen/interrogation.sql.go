@@ -36,7 +36,7 @@ func (q *Queries) GetInterrogationCase(ctx context.Context, id string) (GetInter
 }
 
 const getInterrogationSuspect = `-- name: GetInterrogationSuspect :one
-SELECT id, name, role, relationship_to_victim, persona, public_alibi,
+SELECT id, name, role, relationship_to_victim, persona, public_knowledge, public_alibi,
        hidden_truth, confession_triggers, confession_keywords, is_culprit
 FROM suspects
 WHERE case_id = $1 AND id = $2
@@ -53,6 +53,7 @@ type GetInterrogationSuspectRow struct {
 	Role                 string
 	RelationshipToVictim string
 	Persona              string
+	PublicKnowledge      string
 	PublicAlibi          string
 	HiddenTruth          string
 	ConfessionTriggers   string
@@ -72,6 +73,7 @@ func (q *Queries) GetInterrogationSuspect(ctx context.Context, arg GetInterrogat
 		&i.Role,
 		&i.RelationshipToVictim,
 		&i.Persona,
+		&i.PublicKnowledge,
 		&i.PublicAlibi,
 		&i.HiddenTruth,
 		&i.ConfessionTriggers,
@@ -82,7 +84,7 @@ func (q *Queries) GetInterrogationSuspect(ctx context.Context, arg GetInterrogat
 }
 
 const listInterrogationAcquaintances = `-- name: ListInterrogationAcquaintances :many
-SELECT name, role, relationship_to_victim, persona
+SELECT name, role, relationship_to_victim, persona, public_knowledge
 FROM suspects
 WHERE case_id = $1 AND id <> $2
 ORDER BY display_order, name
@@ -98,10 +100,12 @@ type ListInterrogationAcquaintancesRow struct {
 	Role                 string
 	RelationshipToVictim string
 	Persona              string
+	PublicKnowledge      string
 }
 
 // What a suspect may know about the others: public facts only. The secret
 // columns are deliberately not selected, so they cannot reach another prompt.
+// public_knowledge is town knowledge (players see it too), so the others know it.
 func (q *Queries) ListInterrogationAcquaintances(ctx context.Context, arg ListInterrogationAcquaintancesParams) ([]ListInterrogationAcquaintancesRow, error) {
 	rows, err := q.db.Query(ctx, listInterrogationAcquaintances, arg.CaseID, arg.SuspectID)
 	if err != nil {
@@ -116,6 +120,7 @@ func (q *Queries) ListInterrogationAcquaintances(ctx context.Context, arg ListIn
 			&i.Role,
 			&i.RelationshipToVictim,
 			&i.Persona,
+			&i.PublicKnowledge,
 		); err != nil {
 			return nil, err
 		}

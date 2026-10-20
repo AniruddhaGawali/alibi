@@ -90,10 +90,10 @@ func (s *PGStore) Suspect(ctx context.Context, storyID, suspectID string) (*Susp
 	}
 	others := make([]llm.Acquaintance, len(rows))
 	for i, o := range rows {
-		others[i] = llm.Acquaintance{Name: o.Name, Role: o.Role, Relationship: o.RelationshipToVictim, Persona: o.Persona}
+		others[i] = llm.Acquaintance{Name: o.Name, Role: o.Role, Relationship: o.RelationshipToVictim, Persona: o.Persona, PublicKnowledge: o.PublicKnowledge}
 	}
 	return &Suspect{ID: r.ID, Persona: llm.Persona{
-		Name: r.Name, Role: r.Role, Relationship: r.RelationshipToVictim, Persona: r.Persona,
+		Name: r.Name, Role: r.Role, Relationship: r.RelationshipToVictim, Persona: r.Persona, PublicKnowledge: r.PublicKnowledge,
 		PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth, ConfessionTriggers: r.ConfessionTriggers,
 		TriggerKeywords: r.ConfessionKeywords, IsCulprit: r.IsCulprit,
 	}}, others, nil
