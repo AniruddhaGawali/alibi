@@ -1,0 +1,70 @@
+# Render blueprint: one free Docker web service running the API plus the chat
+# worker, email worker and daily token reset as goroutines. Secrets are marked
+# sync: false, so Render asks for them in the dashboard and they never live in git.
+services:
+  - type: web
+    name: alibi-backend
+    runtime: docker
+    plan: free
+    region: ohio # keep this next to the database regions
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Databases and queues
+      - key: POSTGRES_URI # Supabase direct connection (port 5432)
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: REDIS_URI # rediss:// for Upstash
+        sync: false
+      - key: MIGRATE_ON_START
+        value: "true"
+      # Auth
+      - key: JWT_SECRET # 32+ characters
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS # the Vercel URL, e.g. https://alibi.vercel.app
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      # Render's proxies sit on private addresses; trust them to read the real client IP.
+      - key: TRUSTED_PROXIES
+        value: 10.0.0.0/8,100.64.0.0/10,172.16.0.0/12,192.168.0.0/16
+      # LLM
+      - key: OPENROUTER_API_KEY
+        sync: false
+      # Image storage
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET_NAME
+        value: alibi-assets
+      # Email: the worker runs inside the API process (one free service only)
+      - key: EMBED_EMAIL_WORKER
+        value: "true"
+      - key: BREVO_SMTP_HOST
+        value: smtp-relay.brevo.com
+      - key: BREVO_SMTP_PORT
+        value: "587"
+      - key: BREVO_SMTP_USER
+        sync: false
+      - key: BREVO_SMTP_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Logs and traces to Axiom
+      - key: AXIOM_API_TOKEN
+        sync: false
+      - key: AXIOM_OTLP_ENDPOINT # host of your Axiom ingest URL
+        value: us-east-1.aws.edge.axiom.co
+      - key: AXIOM_DATASET
+        value: alibi-log
+      # Google sign-in (optional): fill these in the dashboard, or delete the three lines.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URL # https://<service>.onrender.com/api/auth/google/callback
+        sync: false
