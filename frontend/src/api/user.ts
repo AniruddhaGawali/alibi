@@ -48,7 +48,16 @@ export const userApi = createApi({
       query: (mode) => ({ url: '/api/user/mode', method: 'PUT', body: { mode } }),
       invalidatesTags: ['User'],
     }),
+    setUsername: build.mutation<{ username: string }, string>({
+      query: (username) => ({ url: '/api/user/username', method: 'PUT', body: { username } }),
+      invalidatesTags: ['User', 'Leaderboard'],
+    }),
   }),
 })
 
-export const { useGetUserDataQuery, useSetAvatarMutation, useSetPlayerModeMutation } = userApi
+export const {
+  useGetUserDataQuery,
+  useSetAvatarMutation,
+  useSetPlayerModeMutation,
+  useSetUsernameMutation,
+} = userApi

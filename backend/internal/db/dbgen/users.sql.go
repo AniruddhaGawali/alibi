@@ -139,3 +139,21 @@ func (q *Queries) SetPlayerMode(ctx context.Context, arg SetPlayerModeParams) (i
 	}
 	return result.RowsAffected(), nil
 }
+
+const setUsername = `-- name: SetUsername :execrows
+UPDATE users SET username = $1 WHERE id = $2
+`
+
+type SetUsernameParams struct {
+	Username string
+	ID       string
+}
+
+// users_username_key (unique on lower(username)) rejects a name someone else holds.
+func (q *Queries) SetUsername(ctx context.Context, arg SetUsernameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUsername, arg.Username, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}

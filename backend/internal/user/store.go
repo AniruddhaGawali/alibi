@@ -63,6 +63,8 @@ type Store interface {
 	SetAvatarCustom(ctx context.Context, id, url, path string) (oldPath string, err error)
 	// SetPlayerMode stores the user's difficulty mode (ModeInvestigator or ModeMasterSleuth).
 	SetPlayerMode(ctx context.Context, id, mode string) error
+	// SetUsername renames the player; ErrUsernameTaken when someone else holds the name.
+	SetUsername(ctx context.Context, id, username string) error
 }
 
 // PGStore implements Store (and wallet.Store) on PostgreSQL. All SQL lives in
@@ -161,6 +163,21 @@ func (s *PGStore) SetAvatarCustom(ctx context.Context, id, url, path string) (st
 
 func (s *PGStore) SetPlayerMode(ctx context.Context, id, mode string) error {
 	n, err := s.q.SetPlayerMode(ctx, dbgen.SetPlayerModeParams{ID: id, PlayerMode: mode})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PGStore) SetUsername(ctx context.Context, id, username string) error {
+	n, err := s.q.SetUsername(ctx, dbgen.SetUsernameParams{ID: id, Username: username})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+		return ErrUsernameTaken
+	}
 	if err != nil {
 		return err
 	}

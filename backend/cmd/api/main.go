@@ -296,6 +296,7 @@ func run() error {
 	mux.HandleFunc("GET /api/user/profile", hc.Wrap(walletData, userH.Profile))
 	mux.HandleFunc("POST /api/user/avatar", hc.Invalidates(userH.SetAvatar, "u:{uid}:profile"))
 	mux.HandleFunc("PUT /api/user/mode", hc.Invalidates(userH.SetMode, "u:{uid}:profile"))
+	mux.HandleFunc("PUT /api/user/username", hc.Invalidates(userH.SetUsername, "u:{uid}:profile"))
 	mux.HandleFunc("GET /api/cases/{id}/briefing", hc.Wrap(caseContent, casesH.Briefing))
 	mux.HandleFunc("GET /api/cases/{id}/suspects", hc.Wrap(caseContent, casesH.Suspects))
 	mux.HandleFunc("GET /api/cases/{id}/hints", hc.Wrap(userData("u:{uid}:hints:{id}", "catalog"), casesH.HintState))
