@@ -118,29 +118,42 @@ func TestPGStore(t *testing.T) {
 	}
 
 	// Token balance: atomic, never negative, never above 10.
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, -4); err != nil || n != 6 {
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, -4, user.DefaultMaxTokens); err != nil || n != 6 {
 		t.Fatalf("spend: %d %v", n, err)
 	}
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, 2); err != nil || n != 8 {
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 2, user.DefaultMaxTokens); err != nil || n != 8 {
 		t.Fatalf("grant: %d %v", n, err)
 	}
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, 25); err != nil || n != 10 {
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 25, user.DefaultMaxTokens); err != nil || n != 10 {
 		t.Fatalf("grant past the cap should stop at 10: %d %v", n, err)
 	}
-	if n, err := s.AdjustTokenBalance(ctx, u.ID, 1); err != nil || n != 10 {
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 1, user.DefaultMaxTokens); err != nil || n != 10 {
 		t.Fatalf("refund at the cap: %d %v", n, err)
 	}
-	if _, err := s.AdjustTokenBalance(ctx, u.ID, -11); !errors.Is(err, user.ErrInsufficientTokens) {
+	if _, err := s.AdjustTokenBalance(ctx, u.ID, -11, user.DefaultMaxTokens); !errors.Is(err, user.ErrInsufficientTokens) {
 		t.Fatalf("overdraw: %v", err)
 	}
 	if n, _ := s.GetTokenBalance(ctx, u.ID); n != 10 {
 		t.Fatalf("balance after rejected overdraw = %d", n)
 	}
-	// The database itself refuses more than 10, whatever the Go code does.
-	if _, err := pool.Exec(ctx, "UPDATE users SET token_balance = 11 WHERE id = $1", u.ID); err == nil {
-		t.Fatal("token_balance 11 should violate the CHECK constraint")
+	// The database itself refuses more than user.TokenCeiling, whatever the Go code does.
+	if _, err := pool.Exec(ctx, "UPDATE users SET token_balance = 101 WHERE id = $1", u.ID); err == nil {
+		t.Fatal("token_balance 101 should violate the CHECK constraint")
 	}
-	if _, err := s.AdjustTokenBalance(ctx, "00000000-0000-0000-0000-000000000000", 1); !errors.Is(err, user.ErrNotFound) {
+	// A raised cap lets a grant go further; lowering it again never takes tokens away.
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 15, 20); err != nil || n != 20 {
+		t.Fatalf("grant to a raised cap: %d %v", n, err)
+	}
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, 1, 10); err != nil || n != 20 {
+		t.Fatalf("grant above a lowered cap: %d %v", n, err)
+	}
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, -1, 10); err != nil || n != 19 {
+		t.Fatalf("spend above a lowered cap: %d %v", n, err)
+	}
+	if n, err := s.AdjustTokenBalance(ctx, u.ID, -9, 10); err != nil || n != 10 { // back to where the test continues
+		t.Fatalf("spend back: %d %v", n, err)
+	}
+	if _, err := s.AdjustTokenBalance(ctx, "00000000-0000-0000-0000-000000000000", 1, user.DefaultMaxTokens); !errors.Is(err, user.ErrNotFound) {
 		t.Fatalf("unknown user: %v", err)
 	}
 
@@ -149,7 +162,7 @@ func TestPGStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.AdjustTokenBalance(ctx, u.ID, -10); err != nil { // u is now empty
+	if _, err := s.AdjustTokenBalance(ctx, u.ID, -10, user.DefaultMaxTokens); err != nil { // u is now empty
 		t.Fatal(err)
 	}
 	if n, err := s.ResetAllTokenBalances(ctx, 10); err != nil || n != 2 {
@@ -163,14 +176,11 @@ func TestPGStore(t *testing.T) {
 	if n, err := s.ResetAllTokenBalances(ctx, 10); err != nil || n != 0 {
 		t.Fatalf("second reset changed %d rows: %v", n, err)
 	}
-	// Asking for more than the cap still stops at 10.
-	if _, err := s.AdjustTokenBalance(ctx, other.ID, -3); err != nil {
-		t.Fatal(err)
+	// Asking for more than the absolute ceiling still stops at user.TokenCeiling.
+	if n, err := s.ResetAllTokenBalances(ctx, user.TokenCeiling+50); err != nil || n != 2 {
+		t.Fatalf("reset above the ceiling: %d %v", n, err)
 	}
-	if n, err := s.ResetAllTokenBalances(ctx, 99); err != nil || n != 1 {
-		t.Fatalf("reset above the cap: %d %v", n, err)
-	}
-	if n, _ := s.GetTokenBalance(ctx, other.ID); n != 10 {
-		t.Fatalf("balance after a reset to 99 = %d", n)
+	if n, _ := s.GetTokenBalance(ctx, other.ID); n != user.TokenCeiling {
+		t.Fatalf("balance after a reset above the ceiling = %d", n)
 	}
 }

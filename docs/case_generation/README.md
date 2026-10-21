@@ -12,7 +12,7 @@
 
 ```
 You are writing a murder-mystery case for "Alibi", a detective game. The player reads a case
-file, interrogates AI-played suspects (each question costs a token, about 10 per day), then accuses
+file, interrogates AI-played suspects (each question costs a token from a limited daily allowance), then accuses
 one suspect. Fill in the JSON template below and answer with valid JSON only, no comments.
 
 Rules:

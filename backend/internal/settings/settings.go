@@ -1,5 +1,6 @@
 // Package settings holds the global game settings the admin panel edits (P5.3):
-// the daily question-token allowance and when it is reset. Postgres (app_settings,
+// the daily question-token allowance, the most tokens a player can hold, and when
+// the allowance is reset. Postgres (app_settings,
 // one row) is the source of truth; every API replica keeps a copy in memory for
 // cacheTTL, so an edit reaches the other replicas within that time.
 package settings
@@ -18,9 +19,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// MaxDailyTokens is the most tokens a day can grant: a player never holds more
-// than user.MaxTokenBalance, and app_settings_daily_tokens_range mirrors it.
-const MaxDailyTokens = 10
+// TokenLimit is the highest max_tokens (and so daily_tokens) an admin can set; it
+// equals user.TokenCeiling and the app_settings CHECKs. DefaultMaxTokens is used
+// when the seed leaves MaxTokens at 0.
+const (
+	TokenLimit       = 100
+	DefaultMaxTokens = 10
+)
+
+// ErrDailyAboveMax means DailyTokens is larger than MaxTokens.
+var ErrDailyAboveMax = errors.New("settings: daily tokens above max tokens")
 
 // cacheTTL is how long a replica trusts its copy of the settings.
 const cacheTTL = 30 * time.Second
@@ -31,6 +39,7 @@ var ErrNotFound = errors.New("settings: not found")
 // Settings are the global game settings.
 type Settings struct {
 	DailyTokens int       `json:"daily_tokens"`         // every balance is reset to this, and new accounts start with it
+	MaxTokens   int       `json:"max_tokens"`           // the most a player can hold; grants and refunds stop here, DailyTokens <= MaxTokens
 	ResetTime   string    `json:"token_reset_time"`     // HH:MM, 24-hour clock
 	Timezone    string    `json:"token_reset_timezone"` // IANA zone ResetTime is read in
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -78,12 +87,15 @@ func (s *PGStore) Get(ctx context.Context) (*Settings, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Settings{DailyTokens: int(r.DailyTokens), ResetTime: r.TokenResetTime, Timezone: r.TokenResetTimezone, UpdatedAt: r.UpdatedAt}, nil
+	return &Settings{DailyTokens: int(r.DailyTokens), MaxTokens: int(r.MaxTokens), ResetTime: r.TokenResetTime, Timezone: r.TokenResetTimezone, UpdatedAt: r.UpdatedAt}, nil
 }
 
 func (s *PGStore) Seed(ctx context.Context, in Settings) error {
+	if in.MaxTokens == 0 {
+		in.MaxTokens = max(DefaultMaxTokens, in.DailyTokens)
+	}
 	return s.q.SeedAppSettings(ctx, dbgen.SeedAppSettingsParams{
-		DailyTokens: int32(in.DailyTokens), TokenResetTime: in.ResetTime, TokenResetTimezone: in.Timezone,
+		DailyTokens: int32(in.DailyTokens), MaxTokens: int32(in.MaxTokens), TokenResetTime: in.ResetTime, TokenResetTimezone: in.Timezone,
 	})
 }
 
@@ -93,7 +105,7 @@ func (s *PGStore) Update(ctx context.Context, in Settings, by string) (*Settings
 		updatedBy = &by
 	}
 	r, err := s.q.UpdateAppSettings(ctx, dbgen.UpdateAppSettingsParams{
-		DailyTokens: int32(in.DailyTokens), TokenResetTime: in.ResetTime, TokenResetTimezone: in.Timezone, UpdatedBy: updatedBy,
+		DailyTokens: int32(in.DailyTokens), MaxTokens: int32(in.MaxTokens), TokenResetTime: in.ResetTime, TokenResetTimezone: in.Timezone, UpdatedBy: updatedBy,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -101,7 +113,7 @@ func (s *PGStore) Update(ctx context.Context, in Settings, by string) (*Settings
 	if err != nil {
 		return nil, err
 	}
-	return &Settings{DailyTokens: int(r.DailyTokens), ResetTime: r.TokenResetTime, Timezone: r.TokenResetTimezone, UpdatedAt: r.UpdatedAt}, nil
+	return &Settings{DailyTokens: int(r.DailyTokens), MaxTokens: int(r.MaxTokens), ResetTime: r.TokenResetTime, Timezone: r.TokenResetTimezone, UpdatedAt: r.UpdatedAt}, nil
 }
 
 // Service serves the settings from memory and refreshes them from the store every
@@ -155,10 +167,16 @@ func (s *Service) Current(ctx context.Context) Settings {
 // DailyTokens is Current().DailyTokens.
 func (s *Service) DailyTokens(ctx context.Context) int { return s.Current(ctx).DailyTokens }
 
+// MaxTokens is Current().MaxTokens, the most tokens a player can hold.
+func (s *Service) MaxTokens(ctx context.Context) int64 { return int64(s.Current(ctx).MaxTokens) }
+
 // Update validates and saves new settings and uses them in this replica at once.
 func (s *Service) Update(ctx context.Context, in Settings, by string) (*Settings, error) {
 	if _, _, _, err := in.Clock(); err != nil {
 		return nil, err
+	}
+	if in.DailyTokens > in.MaxTokens {
+		return nil, ErrDailyAboveMax
 	}
 	out, err := s.store.Update(ctx, in, by)
 	if err != nil {

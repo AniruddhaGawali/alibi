@@ -40,6 +40,8 @@ type fakeStore struct {
 
 type fakeWallet struct{ granted []int64 }
 
+func (w *fakeWallet) MaxTokens(context.Context) int64 { return 10 }
+
 func (w *fakeWallet) Grant(_ context.Context, _ string, amount int64) (int64, error) {
 	w.granted = append(w.granted, amount)
 	return 10, nil // as if capped at the maximum
@@ -519,18 +521,20 @@ func TestConfig(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"daily_tokens":10`) || !strings.Contains(rec.Body.String(), `"token_reset_time":"00:00"`) {
 		t.Fatalf("get: %d %s", rec.Code, rec.Body)
 	}
-	rec = serveWith(h, "PUT", "/api/admin/config", `{"daily_tokens":7,"token_reset_time":"04:30","token_reset_timezone":"Asia/Kolkata"}`)
-	if rec.Code != 200 || fs.saved == nil || fs.saved.DailyTokens != 7 || fs.saved.ResetTime != "04:30" || fs.saved.Timezone != "Asia/Kolkata" {
+	rec = serveWith(h, "PUT", "/api/admin/config", `{"daily_tokens":20,"max_tokens":25,"token_reset_time":"04:30","token_reset_timezone":"Asia/Kolkata"}`)
+	if rec.Code != 200 || fs.saved == nil || fs.saved.DailyTokens != 20 || fs.saved.MaxTokens != 25 || fs.saved.ResetTime != "04:30" || fs.saved.Timezone != "Asia/Kolkata" {
 		t.Fatalf("put: %d %s %+v", rec.Code, rec.Body, fs.saved)
 	}
 	for name, body := range map[string]string{
-		"zero tokens": `{"daily_tokens":0,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
-		"too many":    `{"daily_tokens":11,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
-		"bad time":    `{"daily_tokens":5,"token_reset_time":"24:00","token_reset_timezone":"UTC"}`,
-		"no colon":    `{"daily_tokens":5,"token_reset_time":"0430","token_reset_timezone":"UTC"}`,
-		"bad zone":    `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"Mars/Olympus"}`,
-		"local zone":  `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"Local"}`,
-		"missing":     `{"daily_tokens":5}`,
+		"zero tokens":    `{"daily_tokens":0,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"daily over max": `{"daily_tokens":11,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"max too high":   `{"daily_tokens":5,"max_tokens":101,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"no max":         `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"bad time":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"24:00","token_reset_timezone":"UTC"}`,
+		"no colon":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"0430","token_reset_timezone":"UTC"}`,
+		"bad zone":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"Mars/Olympus"}`,
+		"local zone":     `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"Local"}`,
+		"missing":        `{"daily_tokens":5}`,
 	} {
 		fs.saved = nil
 		if rec := serveWith(h, "PUT", "/api/admin/config", body); rec.Code != 422 || fs.saved != nil {
@@ -656,7 +660,7 @@ func TestGrantTokens(t *testing.T) {
 		status     int
 	}{
 		"zero":      {"/api/admin/users/" + suspectID + "/tokens", `{"amount":0}`, 422},
-		"too many":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":11}`, 422},
+		"too many":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":101}`, 422}, // above user.TokenCeiling
 		"negative":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":-3}`, 422},
 		"bad id":    {"/api/admin/users/nope/tokens", `{"amount":1}`, 400},
 		"no player": {"/api/admin/users/" + caseID + "/tokens", `{"amount":1}`, 404},

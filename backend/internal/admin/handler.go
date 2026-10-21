@@ -74,6 +74,8 @@ func WithLimitReset(l LimitResetter) Option { return func(h *Handler) { h.limits
 // TokenGranter adds question tokens to one player; *wallet.Service implements it.
 type TokenGranter interface {
 	Grant(ctx context.Context, userID string, amount int64) (int64, error)
+	// MaxTokens is the most a player can hold (the grant stops there).
+	MaxTokens(ctx context.Context) int64
 }
 
 // WithTokens enables POST /api/admin/users/{id}/tokens.

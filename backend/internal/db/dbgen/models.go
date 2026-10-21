@@ -23,6 +23,7 @@ type AppSetting struct {
 	TokenResetTimezone string
 	UpdatedAt          time.Time
 	UpdatedBy          *string
+	MaxTokens          int32
 }
 
 type CaseNote struct {

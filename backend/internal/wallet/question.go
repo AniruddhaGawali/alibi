@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"backend/internal/user"
 	"backend/pkg/utils"
 	"github.com/redis/go-redis/v9"
 )
@@ -48,7 +49,7 @@ func (s *Service) SpendQuestion(ctx context.Context, userID string) (int64, erro
 	if n == -1 {
 		return 0, ErrInsufficient
 	}
-	pg, err := s.store.AdjustTokenBalance(ctx, userID, -1)
+	pg, err := s.store.AdjustTokenBalance(ctx, userID, -1, s.maxTokens(ctx))
 	if err != nil {
 		// Redis took a token Postgres did not (or may not have): resync from Postgres.
 		s.drop(ctx, userID)
@@ -83,11 +84,12 @@ func (s *Service) decr(ctx context.Context, userID string) (int64, error) {
 // RefundQuestion gives back a token taken by SpendQuestion (moderation block,
 // model timeout or failure): Postgres first, then INCR on the cached counter.
 func (s *Service) RefundQuestion(ctx context.Context, userID string) (int64, error) {
-	pg, err := s.store.AdjustTokenBalance(ctx, userID, 1)
+	maxTokens := s.maxTokens(ctx)
+	pg, err := s.store.AdjustTokenBalance(ctx, userID, 1, maxTokens)
 	if err != nil {
 		return 0, err
 	}
-	if err := incrScript.Run(ctx, s.rdb, []string{Key(userID)}, MaxBalance).Err(); err != nil {
+	if err := incrScript.Run(ctx, s.rdb, []string{Key(userID)}, maxTokens).Err(); err != nil {
 		utils.LogErrorCtx(ctx, "token cache refund failed", "user_id", userID, "err", err)
 		s.drop(ctx, userID)
 	}
@@ -107,7 +109,7 @@ func (s *Service) drop(ctx context.Context, userID string) {
 // rather than writing the amount into each key means a spend racing with the
 // reset cannot leave Redis and Postgres disagreeing for long.
 func (s *Service) ResetAll(ctx context.Context, tokens int64) (int64, error) {
-	if tokens < 0 || tokens > MaxBalance {
+	if tokens < 0 || tokens > user.TokenCeiling {
 		return 0, ErrInvalid
 	}
 	changed, err := s.store.ResetAllTokenBalances(ctx, tokens)

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"backend/internal/user"
 	"backend/pkg/utils"
 )
 
@@ -30,8 +29,8 @@ func (h *Handler) SearchUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 type grantReq struct {
-	// A player never holds more than user.MaxTokenBalance, so more than that is never useful.
-	Amount int64 `json:"amount" validate:"required,min=1,max=10"`
+	// A player never holds more than the max_tokens setting (at most user.TokenCeiling); the wallet stops there.
+	Amount int64 `json:"amount" validate:"required,min=1,max=100"`
 }
 
 type grantResp struct {
@@ -42,7 +41,7 @@ type grantResp struct {
 }
 
 // GrantTokens handles POST /api/admin/users/{id}/tokens {amount}: adds question
-// tokens to one player now, up to the 10 a player can hold. The daily reset still
+// tokens to one player now, up to the max_tokens a player can hold. The daily reset still
 // sets everyone back to the daily allowance, so granted tokens do not carry over.
 func (h *Handler) GrantTokens(w http.ResponseWriter, r *http.Request) {
 	if h.tokens == nil {
@@ -73,7 +72,7 @@ func (h *Handler) GrantTokens(w http.ResponseWriter, r *http.Request) {
 	utils.LogInfoCtx(r.Context(), "admin granted tokens", "admin_id", h.userID(r.Context()), "user_id", id,
 		"requested", req.Amount, "granted", granted, "balance", balance)
 	utils.SuccessResponse(w, http.StatusOK, grantResp{
-		UserID: id, TokenBalance: balance, Granted: granted, Capped: granted < req.Amount && balance >= user.MaxTokenBalance,
+		UserID: id, TokenBalance: balance, Granted: granted, Capped: granted < req.Amount && balance >= h.tokens.MaxTokens(r.Context()),
 	})
 }
 

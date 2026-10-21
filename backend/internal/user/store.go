@@ -71,9 +71,14 @@ type PGStore struct{ q *dbgen.Queries }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
 
-// MaxTokenBalance is the most question tokens a player can hold. Every grant,
-// refund and reset stops here; the database also refuses more (migration 00013).
-const MaxTokenBalance = 10
+// The most question tokens a player can hold is an admin setting (app_settings.max_tokens,
+// read through settings.Service.MaxTokens). DefaultMaxTokens is its default, and
+// TokenCeiling the absolute limit the setting and the database (users_token_balance_max,
+// migration 00025) allow.
+const (
+	DefaultMaxTokens = 10
+	TokenCeiling     = 100
+)
 
 // ErrInsufficientTokens is returned by AdjustTokenBalance when the balance
 // would go below zero. The wallet package re-exports the same value.
@@ -181,17 +186,17 @@ func (s *PGStore) GetTokenBalance(ctx context.Context, id string) (int64, error)
 }
 
 // ResetAllTokenBalances sets every user's balance to tokens (at most
-// MaxTokenBalance) and returns how many rows changed (the daily reset).
+// TokenCeiling) and returns how many rows changed (the daily reset).
 func (s *PGStore) ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error) {
-	return s.q.ResetAllTokenBalances(ctx, min(tokens, MaxTokenBalance))
+	return s.q.ResetAllTokenBalances(ctx, min(tokens, TokenCeiling))
 }
 
 // AdjustTokenBalance atomically adds delta and returns the new balance, which
-// never exceeds MaxTokenBalance (extra tokens are simply lost). The query refuses
+// a grant or refund never takes above maxTokens (extra tokens are simply lost). The query refuses
 // to go below zero; we then tell "unknown user" from "insufficient tokens" with a
 // second read.
-func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta int64) (int64, error) {
-	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta, Cap: MaxTokenBalance})
+func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta, maxTokens int64) (int64, error) {
+	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta, Cap: min(maxTokens, TokenCeiling)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gErr := s.GetTokenBalance(ctx, id); gErr != nil {
 			return 0, gErr

@@ -203,18 +203,22 @@ func TestPGStore(t *testing.T) {
 	// Settings: seeded once, then owned by the admin panel.
 	ss := settings.NewPGStore(pool)
 	svc, err := settings.New(ctx, ss, settings.Settings{DailyTokens: 8, ResetTime: "01:15", Timezone: "UTC"})
-	if err != nil || svc.DailyTokens(ctx) != 8 {
-		t.Fatalf("seed: %v", err)
+	if err != nil || svc.DailyTokens(ctx) != 8 || svc.MaxTokens(ctx) != settings.DefaultMaxTokens {
+		t.Fatalf("seed: %v %+v", err, svc.Current(ctx))
 	}
-	if _, err := svc.Update(ctx, settings.Settings{DailyTokens: 6, ResetTime: "04:30", Timezone: "Asia/Kolkata"}, u.ID); err != nil {
+	if _, err := svc.Update(ctx, settings.Settings{DailyTokens: 6, MaxTokens: 20, ResetTime: "04:30", Timezone: "Asia/Kolkata"}, u.ID); err != nil {
 		t.Fatal(err)
 	}
 	again, err := settings.New(ctx, ss, settings.Settings{DailyTokens: 8, ResetTime: "01:15", Timezone: "UTC"})
-	if err != nil || again.Current(ctx).DailyTokens != 6 || again.Current(ctx).ResetTime != "04:30" {
+	if err != nil || again.Current(ctx).DailyTokens != 6 || again.Current(ctx).MaxTokens != 20 || again.Current(ctx).ResetTime != "04:30" {
 		t.Fatalf("seed overwrote the saved settings: %+v %v", again.Current(ctx), err)
 	}
-	if _, err := ss.Update(ctx, settings.Settings{DailyTokens: 11, ResetTime: "04:30", Timezone: "UTC"}, ""); err == nil {
-		t.Fatal("11 daily tokens accepted by the database")
+	// The database refuses what the API refuses: a cap above 100, and a daily allowance above the cap.
+	if _, err := ss.Update(ctx, settings.Settings{DailyTokens: 5, MaxTokens: 101, ResetTime: "04:30", Timezone: "UTC"}, ""); err == nil {
+		t.Fatal("max_tokens 101 accepted by the database")
+	}
+	if _, err := ss.Update(ctx, settings.Settings{DailyTokens: 11, MaxTokens: 10, ResetTime: "04:30", Timezone: "UTC"}, ""); err == nil {
+		t.Fatal("daily tokens above max tokens accepted by the database")
 	}
 }
 

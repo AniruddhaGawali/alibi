@@ -880,7 +880,7 @@ func (q *Queries) AdminUpdateSuspect(ctx context.Context, arg AdminUpdateSuspect
 }
 
 const getAppSettings = `-- name: GetAppSettings :one
-SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at
+SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens
 FROM app_settings
 WHERE id
 `
@@ -890,6 +890,7 @@ type GetAppSettingsRow struct {
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedAt          time.Time
+	MaxTokens          int32
 }
 
 func (q *Queries) GetAppSettings(ctx context.Context) (GetAppSettingsRow, error) {
@@ -900,13 +901,14 @@ func (q *Queries) GetAppSettings(ctx context.Context) (GetAppSettingsRow, error)
 		&i.TokenResetTime,
 		&i.TokenResetTimezone,
 		&i.UpdatedAt,
+		&i.MaxTokens,
 	)
 	return i, err
 }
 
 const seedAppSettings = `-- name: SeedAppSettings :exec
-INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone)
-VALUES ($1, $2, $3)
+INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone, max_tokens)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING
 `
 
@@ -914,27 +916,35 @@ type SeedAppSettingsParams struct {
 	DailyTokens        int32
 	TokenResetTime     string
 	TokenResetTimezone string
+	MaxTokens          int32
 }
 
 // First startup only: an existing row (set from the admin panel) is never overwritten.
 func (q *Queries) SeedAppSettings(ctx context.Context, arg SeedAppSettingsParams) error {
-	_, err := q.db.Exec(ctx, seedAppSettings, arg.DailyTokens, arg.TokenResetTime, arg.TokenResetTimezone)
+	_, err := q.db.Exec(ctx, seedAppSettings,
+		arg.DailyTokens,
+		arg.TokenResetTime,
+		arg.TokenResetTimezone,
+		arg.MaxTokens,
+	)
 	return err
 }
 
 const updateAppSettings = `-- name: UpdateAppSettings :one
 UPDATE app_settings SET
     daily_tokens         = $1,
-    token_reset_time     = $2,
-    token_reset_timezone = $3,
+    max_tokens           = $2,
+    token_reset_time     = $3,
+    token_reset_timezone = $4,
     updated_at           = now(),
-    updated_by           = $4
+    updated_by           = $5
 WHERE id
-RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at
+RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens
 `
 
 type UpdateAppSettingsParams struct {
 	DailyTokens        int32
+	MaxTokens          int32
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedBy          *string
@@ -945,11 +955,13 @@ type UpdateAppSettingsRow struct {
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedAt          time.Time
+	MaxTokens          int32
 }
 
 func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsParams) (UpdateAppSettingsRow, error) {
 	row := q.db.QueryRow(ctx, updateAppSettings,
 		arg.DailyTokens,
+		arg.MaxTokens,
 		arg.TokenResetTime,
 		arg.TokenResetTimezone,
 		arg.UpdatedBy,
@@ -960,6 +972,7 @@ func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsPa
 		&i.TokenResetTime,
 		&i.TokenResetTimezone,
 		&i.UpdatedAt,
+		&i.MaxTokens,
 	)
 	return i, err
 }

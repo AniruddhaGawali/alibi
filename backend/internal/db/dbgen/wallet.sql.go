@@ -11,7 +11,10 @@ import (
 
 const adjustTokenBalance = `-- name: AdjustTokenBalance :one
 UPDATE users
-SET token_balance = LEAST(token_balance + $1::bigint, $2::bigint)
+SET token_balance = CASE
+        WHEN $1::bigint > 0 THEN LEAST(token_balance + $1::bigint, GREATEST($2::bigint, token_balance))
+        ELSE token_balance + $1::bigint
+    END
 WHERE id = $3 AND token_balance + $1::bigint >= 0
 RETURNING token_balance
 `
@@ -23,8 +26,9 @@ type AdjustTokenBalanceParams struct {
 }
 
 // Adds delta (negative to spend). The WHERE clause turns an overdraw into "no
-// rows", so concurrent spends can never push the balance below zero, and LEAST
-// stops a grant or refund from taking it above @cap.
+// rows", so concurrent spends can never push the balance below zero. A grant or
+// refund stops at @cap (the admin-set max_tokens); a spend is never capped, and a grant
+// never lowers a balance that is already above @cap (the admin lowered the cap since).
 func (q *Queries) AdjustTokenBalance(ctx context.Context, arg AdjustTokenBalanceParams) (int64, error) {
 	row := q.db.QueryRow(ctx, adjustTokenBalance, arg.Delta, arg.Cap, arg.ID)
 	var token_balance int64
