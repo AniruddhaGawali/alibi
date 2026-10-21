@@ -32,8 +32,8 @@ The game is an interactive, AI-driven detective mystery game where players are p
 * **FR3.3:** The system shall display the remaining token balance prominently and update it instantly when a question is sent.  
 * **FR3.4:** The system shall prevent the user from asking further questions when their token balance reaches zero (input disabled with "Out of tokens. Make your final deduction.").  
 * **FR3.5:** A token is refunded when the model fails before producing any answer (timeout, upstream error), at most a configured number of times per player per day. A blocked (moderated) question never costs a token.  
-* **FR3.6:** A player never holds more than 10 tokens; winning a case awards trophies only, never tokens.  
-* **FR3.7:** An admin can give 1-10 tokens to one player (capped at the 10 a player can hold).
+* **FR3.6:** A player never holds more than the admin-set maximum (`max_tokens`, 1-100, default 10); winning a case awards trophies only, never tokens.  
+* **FR3.7:** An admin can give tokens to one player (capped at the maximum a player can hold).
 
 ## **FR4: Chat History, Notes and Hints**
 
@@ -51,7 +51,7 @@ The game is an interactive, AI-driven detective mystery game where players are p
 ## **FR6: Admin Panel**
 
 * **FR6.1:** Users have a role (`user` or `admin`). Every `/api/admin/*` route checks the role in the token and again in the database, so a demotion applies at once. Admins log in to `/admin/dashboard`.  
-* **FR6.2:** **Global settings:** daily token allowance (1-10), reset time (HH:MM) and IANA time zone, applied to all players without a restart.  
+* **FR6.2:** **Global settings:** daily token allowance and the maximum a player can hold (1-100, allowance ≤ maximum), reset time (HH:MM) and IANA time zone, applied to all players without a restart.  
 * **FR6.3:** **Case management:** create, edit, publish/unpublish and delete cases (title, synopsis, difficulty, reward and penalty trophies, main plot, resolution, up to 3 hints, LLM model, thumbnail, background music track). New cases are drafts; publishing needs at least 2 suspects and exactly one culprit; cases that have been played cannot be deleted, only unpublished.  
 * **FR6.4:** **Suspects and scenes:** manage suspects (avatar, testimony, culprit flag, and the AI persona fields: persona, public alibi, hidden truth, confession triggers, confession keywords) and scene images. One culprit per case; secrets need keywords.  
 * **FR6.5:** **Image upload:** admin images are re-encoded to WebP, scaled down and stored in object storage; replaced or deleted images are removed from the bucket.  
@@ -283,7 +283,7 @@ This system design is a **Microservices and Polyglot Persistence Architecture** 
   * **Initial Balance:** 10 tokens on signup.  
   * **Daily Refresh Mechanism:** balances are reset to the daily allowance every day.  
   * **No Rollover:** unused tokens do not roll over (5 left means 10 the next day, not 15).  
-  * **Admin Configuration:** the daily allowance (1-10) and the reset time and time zone are configured by an administrator on the admin settings page and apply to all users.  
+  * **Admin Configuration:** the daily allowance, the maximum a player can hold (1-100) and the reset time and time zone are configured by an administrator on the admin settings page and apply to all users.  
   * **Refunds:** failures before any answer refund the token (FR3.5).  
   * The visual token counter updates instantly upon message submission.  
   * **User Story 4.3: Hitting the Token Limit**  

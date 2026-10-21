@@ -5,6 +5,8 @@ export type Difficulty = 'easy' | 'medium' | 'hard'
 /** Global game settings (GET/PUT /api/admin/config). */
 export interface AdminConfig {
   daily_tokens: number
+  /** The most question tokens a player can hold (1-100); daily_tokens is at most this. */
+  max_tokens: number
   /** HH:MM, 24-hour clock. */
   token_reset_time: string
   /** IANA zone the reset time is read in. */
@@ -125,13 +127,13 @@ export interface AdminPlayer {
 export interface TokenGrant {
   user_id: string
   token_balance: number
-  /** What was actually added: a player never holds more than 10. */
+  /** What was actually added: a player never holds more than max_tokens. */
   granted: number
   capped: boolean
 }
 
-/** The most question tokens a player can hold (user.MaxTokenBalance on the server). */
-export const MAX_TOKEN_BALANCE = 10
+/** The highest max_tokens the server allows (user.TokenCeiling). */
+export const TOKEN_CEILING = 100
 
 export type ImageKind = 'thumbnail' | 'scene' | 'suspect'
 
@@ -151,7 +153,7 @@ export const adminApi = createApi({
     }),
     updateAdminConfig: build.mutation<AdminConfig, Omit<AdminConfig, 'updated_at'>>({
       query: (body) => ({ url: '/api/admin/config', method: 'PUT', body }),
-      invalidatesTags: ['AdminConfig'],
+      invalidatesTags: ['AdminConfig', 'GameRules'],
     }),
     getAdminModels: build.query<AdminModelList>({
       query: () => '/api/admin/models',
