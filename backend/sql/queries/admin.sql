@@ -157,25 +157,26 @@ DELETE FROM case_scenes WHERE id = @id AND case_id = @case_id
 RETURNING image_url;
 
 -- name: GetAppSettings :one
-SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at
+SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens
 FROM app_settings
 WHERE id;
 
 -- name: SeedAppSettings :exec
 -- First startup only: an existing row (set from the admin panel) is never overwritten.
-INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone)
-VALUES (@daily_tokens, @token_reset_time, @token_reset_timezone)
+INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone, max_tokens)
+VALUES (@daily_tokens, @token_reset_time, @token_reset_timezone, @max_tokens)
 ON CONFLICT (id) DO NOTHING;
 
 -- name: UpdateAppSettings :one
 UPDATE app_settings SET
     daily_tokens         = @daily_tokens,
+    max_tokens           = @max_tokens,
     token_reset_time     = @token_reset_time,
     token_reset_timezone = @token_reset_timezone,
     updated_at           = now(),
     updated_by           = @updated_by
 WHERE id
-RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at;
+RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens;
 
 -- name: AdminSearchUsers :many
 -- Players for the admin panel, by username or email (@q already has LIKE wildcards

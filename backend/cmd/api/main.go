@@ -134,7 +134,7 @@ func run() error {
 	// the admin panel after that.
 	settingsCtx, cancelSettings := context.WithTimeout(context.Background(), 10*time.Second)
 	gameSettings, err := settings.New(settingsCtx, settings.NewPGStore(pg), settings.Settings{
-		DailyTokens: cfg.DailyTokens, ResetTime: cfg.TokenResetTime, Timezone: cfg.TokenResetTimezone,
+		DailyTokens: cfg.DailyTokens, MaxTokens: max(settings.DefaultMaxTokens, cfg.DailyTokens), ResetTime: cfg.TokenResetTime, Timezone: cfg.TokenResetTimezone,
 	})
 	cancelSettings()
 	if err != nil {
@@ -147,7 +147,7 @@ func run() error {
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL)
 	blacklist := auth.NewBlacklist(rdb)
 	blacklist.SetFailOpen(cfg.AuthFailOpen)
-	walletSvc := wallet.New(userStore, rdb)
+	walletSvc := wallet.New(userStore, rdb, gameSettings.MaxTokens)
 	authH := auth.NewHandler(auth.Deps{
 		Users:     userStore,
 		Tokens:    tokens,
@@ -318,6 +318,7 @@ func run() error {
 	mux.HandleFunc("GET /api/dashboard/stories", hc.Wrap(httpcache.Policy{TTL: cfg.CacheCatalogTTL, MaxAge: min(cfg.CacheStaticMaxAge, 30*time.Minute), Shared: true, Tags: []string{"catalog"}}, dashH.Stories))
 	mux.HandleFunc("GET /api/dashboard/stats", hc.Wrap(httpcache.Policy{TTL: cfg.CacheWalletTTL, Tags: []string{"u:{uid}", "u:{uid}:wallet", "catalog"}}, dashH.Stats))
 	mux.HandleFunc("GET /api/dashboard/leaderboard", dashH.Leaderboard)
+	mux.HandleFunc("GET /api/game/rules", gameSettings.PublicRules)
 	mux.HandleFunc("GET /api/dashboard/active-case", hc.Wrap(userData("catalog"), dashH.ActiveCase))
 
 	// Deny by default: every route needs a valid JWT unless it is listed here.
@@ -334,6 +335,7 @@ func run() error {
 		"POST /api/auth/google/exchange",
 		// The landing page shows the top players to visitors (usernames and trophies only).
 		"GET /api/dashboard/leaderboard",
+		"GET /api/game/rules", // the landing page shows the token numbers to visitors
 	)
 	protected := auth.Middleware(tokens, blacklist, public)(mux)
 

@@ -82,10 +82,10 @@ func (l *lockedStore) GetTokenBalance(ctx context.Context, id string) (int64, er
 	defer l.mu.Unlock()
 	return l.fakeStore.GetTokenBalance(ctx, id)
 }
-func (l *lockedStore) AdjustTokenBalance(ctx context.Context, id string, d int64) (int64, error) {
+func (l *lockedStore) AdjustTokenBalance(ctx context.Context, id string, d, maxTokens int64) (int64, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.fakeStore.AdjustTokenBalance(ctx, id, d)
+	return l.fakeStore.AdjustTokenBalance(ctx, id, d, maxTokens)
 }
 
 func TestSpendQuestionResyncsWhenPostgresDisagrees(t *testing.T) {
@@ -171,7 +171,7 @@ func TestTokensNeverExceedTheCap(t *testing.T) {
 	ctx := context.Background()
 	st.bal["u1"] = 8
 
-	if n, err := s.Grant(ctx, "u1", 5); err != nil || n != MaxBalance || st.bal["u1"] != MaxBalance {
+	if n, err := s.Grant(ctx, "u1", 5); err != nil || n != user.DefaultMaxTokens || st.bal["u1"] != user.DefaultMaxTokens {
 		t.Fatalf("grant past the cap: %d %v", n, err)
 	}
 	// A refund when the Redis copy is already full does not go above 10 either.
@@ -186,7 +186,30 @@ func TestTokensNeverExceedTheCap(t *testing.T) {
 	if got, _ := mr.Get(Key("u1")); got != "10" || st.bal["u1"] != 10 {
 		t.Fatalf("refund at the cap: redis=%q postgres=%d", got, st.bal["u1"])
 	}
-	if _, err := s.ResetAll(ctx, MaxBalance+1); !errors.Is(err, ErrInvalid) {
+	if _, err := s.ResetAll(ctx, user.TokenCeiling+1); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("reset above the cap: %v", err)
+	}
+}
+
+func TestConfigurableCap(t *testing.T) {
+	s, st, _ := newService(t)
+	st.bal["u1"] = 15
+	limit := int64(20)
+	s.maxTokens = func(context.Context) int64 { return limit }
+	ctx := context.Background()
+	// A raised cap lets grants go past the old 10.
+	if n, err := s.Grant(ctx, "u1", 10); err != nil || n != 20 {
+		t.Fatalf("grant to the raised cap: %d %v", n, err)
+	}
+	if s.MaxTokens(ctx) != 20 {
+		t.Fatalf("MaxTokens = %d", s.MaxTokens(ctx))
+	}
+	// Lowering the cap never takes tokens away: a grant above it keeps the balance, a spend just spends.
+	limit = 10
+	if n, err := s.Grant(ctx, "u1", 1); err != nil || n != 20 {
+		t.Fatalf("grant above a lowered cap: %d %v", n, err)
+	}
+	if n, err := s.Spend(ctx, "u1", 1); err != nil || n != 19 {
+		t.Fatalf("spend above a lowered cap: %d %v", n, err)
 	}
 }

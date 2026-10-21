@@ -47,7 +47,7 @@ type Config struct {
 	// Token economy and chat storage.
 	// The next three only seed app_settings on the first startup; after that they are
 	// edited from the admin panel (GET/PUT /api/admin/config).
-	DailyTokens           int    // every balance is reset to this (and new accounts start with it); 1-10, the most a player can hold
+	DailyTokens           int    // first-startup seed of the daily allowance (1-100); the admin panel owns it after that
 	TokenResetTime        string // HH:MM the daily reset runs at
 	TokenResetTimezone    string // IANA zone the reset time is read in
 	MongoDatabase         string // database holding chat_messages
@@ -246,7 +246,7 @@ func load(required []string) (*Config, error) {
 		LLMDailyTokenBudget: envInt("LLM_DAILY_TOKEN_BUDGET", 3_000_000, 0, 2_000_000_000),
 		LLMStrikesPerHour:   envInt("LLM_INJECTION_STRIKES_PER_HOUR", 5, 0, 1000),
 
-		DailyTokens:           envInt("DAILY_TOKENS", 10, 1, 10),
+		DailyTokens:           envInt("DAILY_TOKENS", 10, 1, 100),
 		TokenResetTime:        envStr("TOKEN_RESET_TIME", "00:00"),
 		TokenResetTimezone:    envStr("TOKEN_RESET_TIMEZONE", "UTC"),
 		MongoDatabase:         envStr("MONGO_DATABASE", "alibi"),
