@@ -162,6 +162,19 @@ func TestPGStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Renaming: another player's name (any case) is taken.
+	if err := s.SetUsername(ctx, u.ID, "Watson"); !errors.Is(err, user.ErrUsernameTaken) {
+		t.Fatalf("rename to a taken name: %v", err)
+	}
+	if err := s.SetUsername(ctx, u.ID, "Holmes"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetByID(ctx, u.ID); got.Username != "Holmes" {
+		t.Fatalf("username after rename = %q", got.Username)
+	}
+	if err := s.SetUsername(ctx, "00000000-0000-0000-0000-000000000000", "nobody"); !errors.Is(err, user.ErrNotFound) {
+		t.Fatalf("rename unknown user: %v", err)
+	}
 	if _, err := s.AdjustTokenBalance(ctx, u.ID, -10, user.DefaultMaxTokens); err != nil { // u is now empty
 		t.Fatal(err)
 	}

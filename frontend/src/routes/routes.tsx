@@ -25,6 +25,7 @@ export const routes: RouteObject[] = [
         children: [
           { path: '/dashboard', lazy: async () => ({ Component: (await import('../pages/DashboardPage')).default }) },
           { path: '/case/:id', lazy: async () => ({ Component: (await import('../pages/CasePage')).default }) },
+          { path: '/onboarding/username', lazy: async () => ({ Component: (await import('../pages/UsernameOnboardingPage')).default }) },
           { path: '/onboarding/avatar', lazy: async () => ({ Component: (await import('../pages/AvatarOnboardingPage')).default }) },
           { path: '/onboarding/mode', lazy: async () => ({ Component: (await import('../pages/ModeOnboardingPage')).default }) },
           {

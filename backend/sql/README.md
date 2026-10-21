@@ -53,7 +53,7 @@ There are no custom SQL functions or stored procedures; `gen_random_uuid()` is b
 
 | File | Query | Purpose |
 |---|---|---|
-| `users.sql` | `CreateUser` (with starting `token_balance`), `GetUserByEmail`, `GetUserByID`, `CheckAvailability` | OTP verification creates the user; login; profile; signup checks email/username are free before sending an OTP |
+| `users.sql` | `CreateUser` (with starting `token_balance`), `GetUserByEmail`, `GetUserByID`, `CheckAvailability`, `SetPlayerMode`, `SetUsername` | OTP verification creates the user; login; profile; signup checks email/username are free before sending an OTP |
 | `avatars.sql` | `SetDefaultAvatar`, `SetCustomAvatar` | switch between a default avatar and an uploaded image; both return the replaced image's object path so it can be deleted from storage |
 | `cases.sql` | `GetCaseBriefing`, `ListCaseScenes`, `ListCaseSuspects` (explicit columns, no `is_culprit`), `GetUserLock`, `CaseIsPublished` | the case briefing endpoints and starting a case (uses `LockUserToCase`) |
 | `notes.sql` | `ListCaseNotes`, `CreateCaseNote` (refuses past the per-case cap), `SuspectInCase`, `DeleteCaseNote` (owner only) | the player's case notes |

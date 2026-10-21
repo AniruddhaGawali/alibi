@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { RiSettings3Line } from '@remixicon/react'
+import { RiPencilLine, RiSettings3Line } from '@remixicon/react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,6 +33,7 @@ export default function UserMenu() {
   const trophies = useGameStore((s) => s.trophies)
   const playerMode = useGameStore((s) => s.playerMode)
   const [panel, setPanel] = useState<SettingsPanel | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   if (isError && !user) {
     // The profile failed to load: never leave the user without a way out.
@@ -51,7 +52,7 @@ export default function UserMenu() {
 
   return (
     <>
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" className="gap-2" aria-label="Open profile menu">
             <Avatar size="sm">
@@ -69,7 +70,21 @@ export default function UserMenu() {
               <AvatarFallback>{user.username.slice(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
             <div className="min-w-0">
-              <p className="truncate font-heading text-base">{user.username}</p>
+              <div className="flex items-center gap-1">
+                <p className="truncate font-heading text-base">{user.username}</p>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Change username"
+                  title="Change username"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setPanel('username')
+                  }}
+                >
+                  <RiPencilLine aria-hidden />
+                </Button>
+              </div>
               <RankBadge trophies={trophies ?? stats?.trophies ?? user.trophies} />
               <p className="truncate text-xs font-normal text-muted-foreground">{user.email}</p>
             </div>
@@ -100,6 +115,7 @@ export default function UserMenu() {
               <RiSettings3Line aria-hidden /> Settings
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent>
+              <DropdownMenuItem onSelect={() => setPanel('username')}>Change username</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setPanel('avatar')}>Change avatar</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setPanel('mode')}>Change difficulty mode</DropdownMenuItem>
             </DropdownMenuSubContent>
