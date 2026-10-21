@@ -59,11 +59,23 @@ type Handler struct {
 	images    storage.Provider             // nil: uploads answer 503
 	settings  SettingsService              // nil: the config routes answer 503
 	tokens    TokenGranter                 // nil: granting tokens answers 503
+	limits    LimitResetter                // nil: resetting limits answers 503
 }
+
+// LimitResetter clears one player's interrogation limits for today;
+// *interrogation.RedisGuard implements it.
+type LimitResetter interface {
+	ResetLimits(ctx context.Context, userID string) error
+}
+
+// WithLimitReset enables POST /api/admin/users/{id}/reset-limits.
+func WithLimitReset(l LimitResetter) Option { return func(h *Handler) { h.limits = l } }
 
 // TokenGranter adds question tokens to one player; *wallet.Service implements it.
 type TokenGranter interface {
 	Grant(ctx context.Context, userID string, amount int64) (int64, error)
+	// MaxTokens is the most a player can hold (the grant stops there).
+	MaxTokens(ctx context.Context) int64
 }
 
 // WithTokens enables POST /api/admin/users/{id}/tokens.
@@ -134,6 +146,7 @@ type createCaseReq struct {
 	PenaltyTrophies *int32   `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"` // taken for a wrong one; DefaultPenaltyTrophies when left out
 	Resolution      string   `json:"resolution" validate:"max=10000"`                      // reveals the truth once the case is closed
 	Hints           []string `json:"hints" validate:"max=3,dive,required,max=1000"`        // progressive hints, easiest first
+	ChatTips        []string `json:"chat_tips" validate:"max=5,dive,required,max=300"`     // public tips for investigators
 	IsPublished     bool     `json:"is_published"`                                         // false (a draft) when left out
 	LLMModel        string   `json:"llm_model" validate:"omitempty,max=100"`               // llm.DefaultModel when left out
 	MusicTrack      string   `json:"music_track"`                                          // a MusicTracks key; "" (left out) plays the main theme
@@ -148,7 +161,8 @@ type updateCaseReq struct {
 	RewardTrophies  *int32    `json:"reward_trophies" validate:"omitempty,min=0,max=1000"`
 	PenaltyTrophies *int32    `json:"penalty_trophies" validate:"omitempty,min=0,max=1000"`
 	Resolution      *string   `json:"resolution" validate:"omitempty,max=10000"`
-	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"` // [] clears them
+	Hints           *[]string `json:"hints" validate:"omitempty,max=3,dive,required,max=1000"`    // [] clears them
+	ChatTips        *[]string `json:"chat_tips" validate:"omitempty,max=5,dive,required,max=300"` // [] clears them
 	IsPublished     *bool     `json:"is_published"`
 	LLMModel        *string   `json:"llm_model" validate:"omitempty,max=100"`
 	MusicTrack      *string   `json:"music_track"` // "" switches back to the main theme
@@ -207,7 +221,7 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	c, err := h.store.CreateCase(r.Context(), CaseInput{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: penalty, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack, ChatTips: req.ChatTips,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "case", "create case failed")
@@ -215,6 +229,25 @@ func (h *Handler) CreateCase(w http.ResponseWriter, r *http.Request) {
 	}
 	utils.LogInfoCtx(r.Context(), "case created", "admin_id", h.userID(r.Context()), "case_id", c.ID, "llm_model", c.LLMModel)
 	utils.SuccessResponse(w, http.StatusCreated, c)
+}
+
+type reorderCasesReq struct {
+	CaseIDs []string `json:"case_ids" validate:"required,min=1,max=1000,unique,dive,uuid"`
+}
+
+// ReorderCases handles PUT /api/admin/cases/order: case_ids lists every case, first to
+// last. The players' dashboard shows the published ones in this order.
+func (h *Handler) ReorderCases(w http.ResponseWriter, r *http.Request) {
+	var req reorderCasesReq
+	if !utils.BindAndValidate(w, r, &req) {
+		return
+	}
+	if err := h.store.ReorderCases(r.Context(), req.CaseIDs); err != nil {
+		h.storeFailed(w, r, err, "case order", "reorder cases failed")
+		return
+	}
+	utils.LogInfoCtx(r.Context(), "cases reordered", "admin_id", h.userID(r.Context()), "cases", len(req.CaseIDs))
+	utils.SuccessResponse(w, http.StatusOK, map[string][]string{"case_ids": req.CaseIDs})
 }
 
 // UpdateCase handles PATCH /api/admin/cases/{id}. Only the fields sent change.
@@ -237,14 +270,17 @@ func (h *Handler) UpdateCase(w http.ResponseWriter, r *http.Request) {
 	if req.LLMModel != nil && !h.checkModel(w, r, *req.LLMModel) {
 		return
 	}
-	var hints []string
+	var hints, tips []string
 	if req.Hints != nil {
 		hints = append([]string{}, *req.Hints...)
+	}
+	if req.ChatTips != nil {
+		tips = append([]string{}, *req.ChatTips...)
 	}
 	c, old, err := h.store.UpdateCase(r.Context(), id, CasePatch{
 		Title: req.Title, Synopsis: req.Synopsis, MainPlot: req.MainPlot, ThumbnailURL: req.ThumbnailURL,
 		DifficultyLevel: req.DifficultyLevel, RewardTrophies: req.RewardTrophies, PenaltyTrophies: req.PenaltyTrophies, Resolution: req.Resolution, Hints: hints,
-		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack,
+		IsPublished: req.IsPublished, LLMModel: req.LLMModel, MusicTrack: req.MusicTrack, ChatTips: tips,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "case", "update case failed")
@@ -319,6 +355,8 @@ func (h *Handler) storeFailed(w http.ResponseWriter, r *http.Request, err error,
 	case errors.Is(err, ErrNotReady):
 		utils.ErrorResponse(w, http.StatusConflict, "a published case needs at least 2 suspects and exactly one culprit",
 			map[string]string{"is_published": "needs at least 2 suspects and exactly one culprit"})
+	case errors.Is(err, ErrStaleOrder):
+		utils.ErrorResponse(w, http.StatusConflict, "the case list changed since you loaded it; reload and try again", nil)
 	case errors.Is(err, ErrNeedsKeywords):
 		utils.ErrorResponse(w, http.StatusUnprocessableEntity, "validation failed",
 			map[string]string{"confession_keywords": "add at least one keyword, or the secrets are in the prompt from the first question"})

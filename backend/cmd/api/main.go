@@ -53,7 +53,7 @@ func run() error {
 		return err
 	}
 
-	shutdownTelemetry, err := logger.Init(context.Background(), "alibi-api", cfg.OTLPEndpoint)
+	shutdownTelemetry, err := logger.InitWith(context.Background(), "alibi-api", logger.Options{Endpoint: cfg.OTLPEndpoint, Secure: cfg.OTLPSecure, Headers: cfg.OTLPHeaders})
 	if err != nil {
 		return err
 	}
@@ -134,7 +134,7 @@ func run() error {
 	// the admin panel after that.
 	settingsCtx, cancelSettings := context.WithTimeout(context.Background(), 10*time.Second)
 	gameSettings, err := settings.New(settingsCtx, settings.NewPGStore(pg), settings.Settings{
-		DailyTokens: cfg.DailyTokens, ResetTime: cfg.TokenResetTime, Timezone: cfg.TokenResetTimezone,
+		DailyTokens: cfg.DailyTokens, MaxTokens: max(settings.DefaultMaxTokens, cfg.DailyTokens), ResetTime: cfg.TokenResetTime, Timezone: cfg.TokenResetTimezone,
 	})
 	cancelSettings()
 	if err != nil {
@@ -147,7 +147,8 @@ func run() error {
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL)
 	blacklist := auth.NewBlacklist(rdb)
 	blacklist.SetFailOpen(cfg.AuthFailOpen)
-	walletSvc := wallet.New(userStore, rdb)
+  walletSvc := wallet.New(userStore, rdb, gameSettings.MaxTokens)
+  mailBroker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen))
 	authH := auth.NewHandler(auth.Deps{
 		Users:     userStore,
 		Tokens:    tokens,
@@ -231,9 +232,23 @@ func run() error {
 			Run(bgCtx, cfg.ChatWorkerConcurrency)
 	}()
 	go chat.Monitor(bgCtx, chatBroker, 30*time.Second)
+	// Single-service hosting: run the email worker here too (EMBED_EMAIL_WORKER=true).
+	// Otherwise run cmd/worker as its own service.
+	emailWorkerDone := make(chan struct{})
+	if cfg.EmbedEmailWorker {
+		mailer := utils.NewMailer(cfg.BrevoSMTPHost, cfg.BrevoSMTPPort, cfg.BrevoSMTPUser, cfg.BrevoSMTPPass, cfg.EmailFrom)
+		go func() {
+			defer close(emailWorkerDone)
+			email.NewWorker(mailBroker, mailer).Run(bgCtx, cfg.WorkerConcurrency)
+		}()
+		go email.Monitor(bgCtx, mailBroker, cfg.WorkerMonitorEvery)
+	} else {
+		close(emailWorkerDone)
+	}
 	defer func() {
 		stopBackground()
 		<-chatWorkerDone
+		<-emailWorkerDone
 	}()
 	resetCron, err := jobs.StartTokenReset(func(ctx context.Context) (jobs.Schedule, error) {
 		s := gameSettings.Current(ctx)
@@ -247,7 +262,7 @@ func run() error {
 	interrogationH := interrogation.NewHandler(interrogationSvc, auth.UserID,
 		interrogation.WithClientIP(func(r *http.Request) string { return utils.ClientIP(r, cfg.TrustedProxies) }))
 	accuseH := accusation.NewHandler(accusation.NewPGStore(pg), accusation.NewRedisLeaderboard(rdb), auth.UserID)
-	adminOpts := []admin.Option{admin.WithTokenRole(auth.Role), admin.WithSettings(gameSettings), admin.WithTokens(walletSvc)}
+	adminOpts := []admin.Option{admin.WithTokenRole(auth.Role), admin.WithSettings(gameSettings), admin.WithTokens(walletSvc), admin.WithLimitReset(guard)}
 	if images != nil {
 		adminOpts = append(adminOpts, admin.WithImages(images))
 	}
@@ -280,6 +295,8 @@ func run() error {
 	mux.HandleFunc("POST /api/auth/logout", authH.Logout)
 	mux.HandleFunc("GET /api/user/profile", hc.Wrap(walletData, userH.Profile))
 	mux.HandleFunc("POST /api/user/avatar", hc.Invalidates(userH.SetAvatar, "u:{uid}:profile"))
+	mux.HandleFunc("PUT /api/user/mode", hc.Invalidates(userH.SetMode, "u:{uid}:profile"))
+	mux.HandleFunc("PUT /api/user/username", hc.Invalidates(userH.SetUsername, "u:{uid}:profile"))
 	mux.HandleFunc("GET /api/cases/{id}/briefing", hc.Wrap(caseContent, casesH.Briefing))
 	mux.HandleFunc("GET /api/cases/{id}/suspects", hc.Wrap(caseContent, casesH.Suspects))
 	mux.HandleFunc("GET /api/cases/{id}/hints", hc.Wrap(userData("u:{uid}:hints:{id}", "catalog"), casesH.HintState))
@@ -300,10 +317,12 @@ func run() error {
 	mux.HandleFunc("POST /api/admin/upload", adminOnly(adminH.Upload))
 	mux.HandleFunc("GET /api/admin/users", adminOnly(adminH.SearchUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/tokens", hc.Invalidates(adminOnly(adminH.GrantTokens), "u:{id}:wallet"))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-limits", adminOnly(adminH.ResetLimits))
 	mux.HandleFunc("GET /api/admin/cases", adminOnly(adminH.ListCases))
 	mux.HandleFunc("POST /api/admin/cases", hc.Invalidates(adminOnly(adminH.CreateCase), "catalog"))
 	mux.HandleFunc("GET /api/admin/cases/{id}", adminOnly(adminH.GetCase))
 	mux.HandleFunc("PATCH /api/admin/cases/{id}", hc.Invalidates(adminOnly(adminH.UpdateCase), "catalog"))
+	mux.HandleFunc("PUT /api/admin/cases/order", hc.Invalidates(adminOnly(adminH.ReorderCases), "catalog"))
 	mux.HandleFunc("DELETE /api/admin/cases/{id}", hc.Invalidates(adminOnly(adminH.DeleteCase), "catalog"))
 	mux.HandleFunc("GET /api/admin/cases/{id}/suspects", adminOnly(adminH.ListSuspects))
 	mux.HandleFunc("POST /api/admin/cases/{id}/suspects", hc.Invalidates(adminOnly(adminH.CreateSuspect), "catalog"))
@@ -315,6 +334,7 @@ func run() error {
 	mux.HandleFunc("GET /api/dashboard/stories", hc.Wrap(httpcache.Policy{TTL: cfg.CacheCatalogTTL, MaxAge: min(cfg.CacheStaticMaxAge, 30*time.Minute), Shared: true, Tags: []string{"catalog"}}, dashH.Stories))
 	mux.HandleFunc("GET /api/dashboard/stats", hc.Wrap(httpcache.Policy{TTL: cfg.CacheWalletTTL, Tags: []string{"u:{uid}", "u:{uid}:wallet", "catalog"}}, dashH.Stats))
 	mux.HandleFunc("GET /api/dashboard/leaderboard", dashH.Leaderboard)
+	mux.HandleFunc("GET /api/game/rules", gameSettings.PublicRules)
 	mux.HandleFunc("GET /api/dashboard/active-case", hc.Wrap(userData("catalog"), dashH.ActiveCase))
 
 	// Deny by default: every route needs a valid JWT unless it is listed here.
@@ -331,6 +351,7 @@ func run() error {
 		"POST /api/auth/google/exchange",
 		// The landing page shows the top players to visitors (usernames and trophies only).
 		"GET /api/dashboard/leaderboard",
+		"GET /api/game/rules", // the landing page shows the token numbers to visitors
 	)
 	protected := auth.Middleware(tokens, blacklist, public)(mux)
 

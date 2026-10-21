@@ -3,23 +3,30 @@ import {
   RiChat3Line,
   RiCoinsLine,
   RiFileTextLine,
+  RiFootprintLine,
   RiLightbulbLine,
   RiLockLine,
   RiMedalLine,
   RiNodeTree,
   RiScales3Line,
   RiSearchEyeLine,
+  RiShieldUserLine,
   RiSurveyLine,
   RiTrophyLine,
 } from '@remixicon/react'
 import { Button } from '@/components/ui/button'
 import { Checklist, RuleSection } from '@/components/rules/RuleSection'
+import ModesSection from '@/components/rules/ModesSection'
+import Walkthrough from '@/components/rules/Walkthrough'
 import { RANKS } from '@/utils/rank'
 import { useLoggedIn } from '@/hooks/useLoggedIn'
+import { useGameRules } from '@/api/game'
 
 const CONTENTS = [
   ['goal', 'The goal'],
   ['flow', 'How a case plays'],
+  ['walkthrough', 'Step by step'],
+  ['modes', 'Difficulty modes'],
   ['tokens', 'Tokens'],
   ['questions', 'Asking questions'],
   ['hints', 'Hints'],
@@ -31,6 +38,7 @@ const CONTENTS = [
 
 export default function HowToPlayPage() {
   const loggedIn = useLoggedIn()
+  const rules = useGameRules()
   return (
     <div className="mx-auto max-w-4xl space-y-8 pb-12">
       <header className="space-y-3 text-center">
@@ -85,24 +93,38 @@ export default function HowToPlayPage() {
         </p>
       </RuleSection>
 
+      <RuleSection id="walkthrough" icon={RiFootprintLine} title="Step by step: your first case">
+        <p>A full case from the dashboard to the verdict, with what you will see on screen at each step.</p>
+        <Walkthrough />
+      </RuleSection>
+
+      <RuleSection id="modes" icon={RiShieldUserLine} title="Difficulty modes">
+        <ModesSection />
+      </RuleSection>
+
       <RuleSection id="tokens" icon={RiCoinsLine} title="Tokens">
         <ul className="list-disc space-y-2 pl-5">
           <li>
             Every question to a suspect costs <strong>1 token</strong>.
           </li>
           <li>
-            You start with <strong>10 tokens</strong> and are topped up to the daily allowance once a day at the reset time. The allowance
-            and reset time are set by the game admins.
+            You start with <strong>{rules.daily_tokens} tokens</strong> and are topped up to that daily allowance once a day at the reset time
+            ({rules.token_reset_time} {rules.token_reset_timezone}).
           </li>
           <li>
-            <strong>Tokens do not roll over.</strong> If you have 5 left, the next day you have 10, not 15.
+            <strong>Tokens do not roll over.</strong> Whatever you have left, the next day you have {rules.daily_tokens} again.
           </li>
-          <li>You can never hold more than 10 tokens, and winning a case never gives tokens, only trophies.</li>
+          <li>You can never hold more than {rules.max_tokens} tokens, and winning a case never gives tokens, only trophies.</li>
           <li>
             When you reach <strong>0 tokens</strong> the chat is shut. You can still read your logs and notes, and you must make your
             final deduction.
           </li>
         </ul>
+        <p className="text-sm">
+          <strong>These numbers can change.</strong> The daily allowance, the most you can hold and the reset time are set by the game
+          admins and may be raised or lowered over time. The figures above are always the current ones. A change to the daily allowance
+          applies from the next reset, and lowering the maximum never takes away tokens you already have.
+        </p>
         <p className="text-sm">
           <strong>Refunds:</strong> if the suspect fails to answer (a timeout or an error), your token is given back, within a daily limit.
           A question that is blocked for being off-topic is free too.

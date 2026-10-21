@@ -5,6 +5,8 @@ export type Difficulty = 'easy' | 'medium' | 'hard'
 /** Global game settings (GET/PUT /api/admin/config). */
 export interface AdminConfig {
   daily_tokens: number
+  /** The most question tokens a player can hold (1-100); daily_tokens is at most this. */
+  max_tokens: number
   /** HH:MM, 24-hour clock. */
   token_reset_time: string
   /** IANA zone the reset time is read in. */
@@ -44,6 +46,8 @@ export interface AdminCaseFields {
   llm_model: string
   /** A case track key (utils/music CASE_TRACKS); '' plays the main theme. */
   music_track: string
+  /** Up to 5 public detective tips shown under the chat box to investigators. */
+  chat_tips: string[]
 }
 
 export interface AdminCase extends AdminCaseFields {
@@ -57,6 +61,8 @@ export interface AdminSuspectFields {
   role: string
   avatar_url: string
   initial_testimony: string
+  /** Background shown to players in investigator mode only. Public, never a secret. */
+  public_knowledge: string
   is_culprit: boolean
   display_order: number
   relationship_to_victim: string
@@ -121,13 +127,13 @@ export interface AdminPlayer {
 export interface TokenGrant {
   user_id: string
   token_balance: number
-  /** What was actually added: a player never holds more than 10. */
+  /** What was actually added: a player never holds more than max_tokens. */
   granted: number
   capped: boolean
 }
 
-/** The most question tokens a player can hold (user.MaxTokenBalance on the server). */
-export const MAX_TOKEN_BALANCE = 10
+/** The highest max_tokens the server allows (user.TokenCeiling). */
+export const TOKEN_CEILING = 100
 
 export type ImageKind = 'thumbnail' | 'scene' | 'suspect'
 
@@ -147,7 +153,7 @@ export const adminApi = createApi({
     }),
     updateAdminConfig: build.mutation<AdminConfig, Omit<AdminConfig, 'updated_at'>>({
       query: (body) => ({ url: '/api/admin/config', method: 'PUT', body }),
-      invalidatesTags: ['AdminConfig'],
+      invalidatesTags: ['AdminConfig', 'GameRules'],
     }),
     getAdminModels: build.query<AdminModelList>({
       query: () => '/api/admin/models',
@@ -162,6 +168,9 @@ export const adminApi = createApi({
     grantAdminTokens: build.mutation<TokenGrant, { id: string; amount: number }>({
       query: ({ id, amount }) => ({ url: `/api/admin/users/${id}/tokens`, method: 'POST', body: { amount } }),
       invalidatesTags: ['AdminUsers'],
+    }),
+    resetAdminUserLimits: build.mutation<{ user_id: string }, string>({
+      query: (id) => ({ url: `/api/admin/users/${id}/reset-limits`, method: 'POST' }),
     }),
     getAdminCases: build.query<AdminCaseSummary[]>({
       query: () => '/api/admin/cases',
@@ -181,6 +190,11 @@ export const adminApi = createApi({
     }),
     updateAdminCase: build.mutation<AdminCase, { id: string } & Partial<AdminCaseFields>>({
       query: ({ id, ...body }) => ({ url: `/api/admin/cases/${id}`, method: 'PATCH', body }),
+    }),
+    /** Sets the order of every case (first to last); the players' dashboard follows it. 409 if the list changed meanwhile. */
+    reorderAdminCases: build.mutation<{ case_ids: string[] }, string[]>({
+      query: (caseIds) => ({ url: '/api/admin/cases/order', method: 'PUT', body: { case_ids: caseIds } }),
+      invalidatesTags: ['AdminCases', 'Stories'],
     }),
     deleteAdminCase: build.mutation<{ id: string }, string>({
       query: (id) => ({ url: `/api/admin/cases/${id}`, method: 'DELETE' }),
@@ -218,11 +232,13 @@ export const adminApi = createApi({
 })
 
 export const {
+  useReorderAdminCasesMutation,
   useGetAdminConfigQuery,
   useUpdateAdminConfigMutation,
   useGetAdminModelsQuery,
   useSearchAdminUsersQuery,
   useGrantAdminTokensMutation,
+  useResetAdminUserLimitsMutation,
   useGetAdminCasesQuery,
   useGetAdminCaseQuery,
   useCreateAdminCaseMutation,

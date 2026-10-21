@@ -36,7 +36,7 @@ func (q *Queries) CheckAvailability(ctx context.Context, arg CheckAvailabilityPa
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, token_balance)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role
+RETURNING id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role, player_mode
 `
 
 type CreateUserParams struct {
@@ -67,12 +67,13 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.AvatarUrl,
 		&i.AvatarPath,
 		&i.Role,
+		&i.PlayerMode,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role FROM users WHERE lower(email) = lower($1)
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role, player_mode FROM users WHERE lower(email) = lower($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -91,12 +92,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.AvatarUrl,
 		&i.AvatarPath,
 		&i.Role,
+		&i.PlayerMode,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role FROM users WHERE id = $1
+SELECT id, username, email, password_hash, avatar_default, trophies, token_balance, created_at, cases_solved, avatar_url, avatar_path, role, player_mode FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
@@ -115,6 +117,43 @@ func (q *Queries) GetUserByID(ctx context.Context, id string) (User, error) {
 		&i.AvatarUrl,
 		&i.AvatarPath,
 		&i.Role,
+		&i.PlayerMode,
 	)
 	return i, err
+}
+
+const setPlayerMode = `-- name: SetPlayerMode :execrows
+UPDATE users SET player_mode = $1 WHERE id = $2
+`
+
+type SetPlayerModeParams struct {
+	PlayerMode string
+	ID         string
+}
+
+// users_player_mode_valid rejects anything but 'investigator' / 'master_sleuth'.
+func (q *Queries) SetPlayerMode(ctx context.Context, arg SetPlayerModeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setPlayerMode, arg.PlayerMode, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setUsername = `-- name: SetUsername :execrows
+UPDATE users SET username = $1 WHERE id = $2
+`
+
+type SetUsernameParams struct {
+	Username string
+	ID       string
+}
+
+// users_username_key (unique on lower(username)) rejects a name someone else holds.
+func (q *Queries) SetUsername(ctx context.Context, arg SetUsernameParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUsername, arg.Username, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

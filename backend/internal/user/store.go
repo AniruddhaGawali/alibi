@@ -30,6 +30,7 @@ type User struct {
 	AvatarURL     *string // public URL of the custom image in object storage
 	Trophies      int
 	Role          string // RoleUser or RoleAdmin
+	PlayerMode    string // ModeInvestigator or ModeMasterSleuth
 	CreatedAt     time.Time
 }
 
@@ -37,6 +38,13 @@ type User struct {
 const (
 	RoleUser  = "user"
 	RoleAdmin = "admin"
+)
+
+// Difficulty modes (users_player_mode_valid). Investigators get suspect backgrounds
+// and chat tips; master sleuths play with the initial testimony alone.
+const (
+	ModeInvestigator = "investigator"
+	ModeMasterSleuth = "master_sleuth"
 )
 
 // Store is the persistence the auth and profile handlers need.
@@ -53,6 +61,10 @@ type Store interface {
 	// SetAvatarCustom points the user at an uploaded image (public URL and
 	// object path). It returns the object path of the image it replaced ("" if none).
 	SetAvatarCustom(ctx context.Context, id, url, path string) (oldPath string, err error)
+	// SetPlayerMode stores the user's difficulty mode (ModeInvestigator or ModeMasterSleuth).
+	SetPlayerMode(ctx context.Context, id, mode string) error
+	// SetUsername renames the player; ErrUsernameTaken when someone else holds the name.
+	SetUsername(ctx context.Context, id, username string) error
 }
 
 // PGStore implements Store (and wallet.Store) on PostgreSQL. All SQL lives in
@@ -61,9 +73,14 @@ type PGStore struct{ q *dbgen.Queries }
 
 func NewPGStore(pool *pgxpool.Pool) *PGStore { return &PGStore{q: dbgen.New(pool)} }
 
-// MaxTokenBalance is the most question tokens a player can hold. Every grant,
-// refund and reset stops here; the database also refuses more (migration 00013).
-const MaxTokenBalance = 10
+// The most question tokens a player can hold is an admin setting (app_settings.max_tokens,
+// read through settings.Service.MaxTokens). DefaultMaxTokens is its default, and
+// TokenCeiling the absolute limit the setting and the database (users_token_balance_max,
+// migration 00025) allow.
+const (
+	DefaultMaxTokens = 10
+	TokenCeiling     = 100
+)
 
 // ErrInsufficientTokens is returned by AdjustTokenBalance when the balance
 // would go below zero. The wallet package re-exports the same value.
@@ -72,7 +89,7 @@ var ErrInsufficientTokens = errors.New("wallet: insufficient tokens")
 func fromRow(r dbgen.User) *User {
 	u := &User{
 		ID: r.ID, Username: r.Username, Email: r.Email, PasswordHash: r.PasswordHash,
-		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), Role: r.Role, CreatedAt: r.CreatedAt,
+		AvatarURL: r.AvatarUrl, Trophies: int(r.Trophies), Role: r.Role, PlayerMode: r.PlayerMode, CreatedAt: r.CreatedAt,
 	}
 	if r.AvatarDefault != nil {
 		n := int(*r.AvatarDefault)
@@ -144,6 +161,32 @@ func (s *PGStore) SetAvatarCustom(ctx context.Context, id, url, path string) (st
 	return deref(old), nil
 }
 
+func (s *PGStore) SetPlayerMode(ctx context.Context, id, mode string) error {
+	n, err := s.q.SetPlayerMode(ctx, dbgen.SetPlayerModeParams{ID: id, PlayerMode: mode})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PGStore) SetUsername(ctx context.Context, id, username string) error {
+	n, err := s.q.SetUsername(ctx, dbgen.SetUsernameParams{ID: id, Username: username})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.UniqueViolation {
+		return ErrUsernameTaken
+	}
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return ""
@@ -160,17 +203,17 @@ func (s *PGStore) GetTokenBalance(ctx context.Context, id string) (int64, error)
 }
 
 // ResetAllTokenBalances sets every user's balance to tokens (at most
-// MaxTokenBalance) and returns how many rows changed (the daily reset).
+// TokenCeiling) and returns how many rows changed (the daily reset).
 func (s *PGStore) ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error) {
-	return s.q.ResetAllTokenBalances(ctx, min(tokens, MaxTokenBalance))
+	return s.q.ResetAllTokenBalances(ctx, min(tokens, TokenCeiling))
 }
 
 // AdjustTokenBalance atomically adds delta and returns the new balance, which
-// never exceeds MaxTokenBalance (extra tokens are simply lost). The query refuses
+// a grant or refund never takes above maxTokens (extra tokens are simply lost). The query refuses
 // to go below zero; we then tell "unknown user" from "insufficient tokens" with a
 // second read.
-func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta int64) (int64, error) {
-	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta, Cap: MaxTokenBalance})
+func (s *PGStore) AdjustTokenBalance(ctx context.Context, id string, delta, maxTokens int64) (int64, error) {
+	n, err := s.q.AdjustTokenBalance(ctx, dbgen.AdjustTokenBalanceParams{ID: id, Delta: delta, Cap: min(maxTokens, TokenCeiling)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, gErr := s.GetTokenBalance(ctx, id); gErr != nil {
 			return 0, gErr

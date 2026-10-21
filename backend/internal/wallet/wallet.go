@@ -19,10 +19,12 @@ var (
 	ErrInvalid      = errors.New("wallet: amount must be between 1 and MaxAmount")
 )
 
+// MaxTokens returns the most tokens a player can hold right now (the admin setting,
+// settings.Service.MaxTokens); grants and refunds stop there.
+type MaxTokens func(ctx context.Context) int64
+
 const (
-	// MaxBalance is the most tokens a player can hold; grants and refunds stop here.
-	MaxBalance = user.MaxTokenBalance
-	MaxAmount  = 1_000_000
+	MaxAmount = 1_000_000
 	// cacheTTL bounds how long a stale cached value can survive if an
 	// invalidation is ever lost (e.g. Redis was unreachable at that moment).
 	cacheTTL = time.Hour
@@ -35,20 +37,29 @@ func Key(userID string) string { return "user:coins:" + userID }
 type Store interface {
 	GetTokenBalance(ctx context.Context, userID string) (int64, error)
 	// AdjustTokenBalance adds delta (may be negative) and returns the new
-	// balance. It returns ErrInsufficient if the result would go below zero.
-	AdjustTokenBalance(ctx context.Context, userID string, delta int64) (int64, error)
+	// balance. It returns ErrInsufficient if the result would go below zero. A
+	// positive delta stops at maxTokens.
+	AdjustTokenBalance(ctx context.Context, userID string, delta, maxTokens int64) (int64, error)
 	// ResetAllTokenBalances sets every balance to tokens; returns rows changed.
 	ResetAllTokenBalances(ctx context.Context, tokens int64) (int64, error)
 }
 
 type Service struct {
-	store Store
-	rdb   *redis.Client
+	store     Store
+	rdb       *redis.Client
+	maxTokens MaxTokens
 }
 
-func New(store Store, rdb *redis.Client) *Service {
-	return &Service{store: store, rdb: rdb}
+// New builds the wallet. maxTokens reads the current cap; nil means user.DefaultMaxTokens.
+func New(store Store, rdb *redis.Client, maxTokens MaxTokens) *Service {
+	if maxTokens == nil {
+		maxTokens = func(context.Context) int64 { return user.DefaultMaxTokens }
+	}
+	return &Service{store: store, rdb: rdb, maxTokens: maxTokens}
 }
+
+// MaxTokens is the cap grants and refunds stop at.
+func (s *Service) MaxTokens(ctx context.Context) int64 { return s.maxTokens(ctx) }
 
 // Balance returns the balance from Redis, falling back to Postgres (and
 // refilling the cache) on a miss or when Redis is unavailable.
@@ -80,7 +91,7 @@ func (s *Service) Cache(ctx context.Context, userID string, balance int64) {
 	}
 }
 
-// Grant adds amount tokens and returns the new balance, which never exceeds MaxBalance.
+// Grant adds amount tokens and returns the new balance, which never exceeds MaxTokens.
 func (s *Service) Grant(ctx context.Context, userID string, amount int64) (int64, error) {
 	if amount < 1 || amount > MaxAmount {
 		return 0, ErrInvalid
@@ -97,7 +108,7 @@ func (s *Service) Spend(ctx context.Context, userID string, amount int64) (int64
 }
 
 func (s *Service) adjust(ctx context.Context, userID string, delta int64) (int64, error) {
-	n, err := s.store.AdjustTokenBalance(ctx, userID, delta)
+	n, err := s.store.AdjustTokenBalance(ctx, userID, delta, s.maxTokens(ctx))
 	if err != nil {
 		return 0, err
 	}

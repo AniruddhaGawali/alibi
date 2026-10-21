@@ -20,8 +20,8 @@ export default function Leaderboard({ side, centered = false }: { side?: ReactNo
     <section className="space-y-3">
       <h2 className={cn(centered ? 'text-center text-4xl text-primary' : 'text-2xl')}>Leaderboard</h2>
       {/* the side column is only reserved when there is something to put in it */}
-      <div className={cn('grid gap-x-2', side && 'lg:grid-cols-[1fr_11.5rem]')}>
-      <div className="min-w-0">
+      <div className={cn('grid grid-cols-[minmax(0,1fr)] gap-x-2', side && 'lg:grid-cols-[minmax(0,1fr)_11.5rem]')}>
+      <div className="flex min-w-0 flex-col">
       {isPending ? (
         <div className="space-y-2">
           {[0, 1, 2, 3, 4].map((i) => (
@@ -34,9 +34,9 @@ export default function Leaderboard({ side, centered = false }: { side?: ReactNo
           <AlertDescription>{error.message}</AlertDescription>
         </Alert>
       ) : !entries || entries.length === 0 ? (
-        <p className="text-muted-foreground">No ranked detectives yet. Solve a case to take the lead.</p>
+        <p className="py-8 text-center text-muted-foreground">No ranked detectives yet. Solve a case to take the lead.</p>
       ) : (
-        <div className="frame-vintage m-6 p-10">
+        <div className="frame-vintage m-6 min-h-96 flex-1 p-10">
           <Table>
             <TableHeader>
               <TableRow>

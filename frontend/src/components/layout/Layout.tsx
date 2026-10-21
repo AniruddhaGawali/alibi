@@ -1,4 +1,5 @@
 import { Outlet, useLocation } from 'react-router'
+import { useSyncPlayerMode } from '@/hooks/useSyncPlayerMode'
 import { useSyncTokenBalance } from '@/hooks/useSyncTokenBalance'
 import MusicPlayer from '@/components/game/MusicPlayer'
 import Navbar from './Navbar'
@@ -6,6 +7,7 @@ import RouteProgress from './RouteProgress'
 
 export default function Layout() {
   useSyncTokenBalance()
+  useSyncPlayerMode()
   const { pathname } = useLocation()
   // the landing page has its own top bar and full-width sections
   const landing = pathname === '/'

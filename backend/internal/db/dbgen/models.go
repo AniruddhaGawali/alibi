@@ -23,6 +23,7 @@ type AppSetting struct {
 	TokenResetTimezone string
 	UpdatedAt          time.Time
 	UpdatedBy          *string
+	MaxTokens          int32
 }
 
 type CaseNote struct {
@@ -69,6 +70,8 @@ type Story struct {
 	Resolution      string
 	Hints           []string
 	MusicTrack      string
+	ChatTips        []string
+	DisplayOrder    int32
 }
 
 type Suspect struct {
@@ -86,6 +89,7 @@ type Suspect struct {
 	HiddenTruth          string
 	ConfessionTriggers   string
 	ConfessionKeywords   []string
+	PublicKnowledge      string
 }
 
 type User struct {
@@ -101,6 +105,7 @@ type User struct {
 	AvatarUrl     *string
 	AvatarPath    *string
 	Role          string
+	PlayerMode    string
 }
 
 type UserIdentity struct {

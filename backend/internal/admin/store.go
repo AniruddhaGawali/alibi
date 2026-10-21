@@ -33,6 +33,9 @@ var (
 	// ErrNeedsKeywords means a suspect has a hidden truth or confession triggers but
 	// no confession keywords, so their secrets would be in every prompt.
 	ErrNeedsKeywords = errors.New("admin: secrets need confession keywords")
+	// ErrStaleOrder means a new order did not list every case exactly once (one was
+	// added or deleted since the list was loaded).
+	ErrStaleOrder = errors.New("admin: case order does not match the cases")
 )
 
 // MinSuspects is how many suspects a published case needs.
@@ -53,6 +56,7 @@ type Case struct {
 	IsPublished     bool      `json:"is_published"`
 	LLMModel        string    `json:"llm_model"`
 	MusicTrack      string    `json:"music_track"` // a MusicTracks key; "" plays the main theme
+	ChatTips        []string  `json:"chat_tips"`   // up to 5 public tips shown to investigators in the chat
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -89,6 +93,7 @@ type Suspect struct {
 	Role                 string   `json:"role"` // e.g. "the butler"
 	AvatarURL            string   `json:"avatar_url"`
 	InitialTestimony     string   `json:"initial_testimony"` // shown to players
+	PublicKnowledge      string   `json:"public_knowledge"`  // background shown to investigators
 	IsCulprit            bool     `json:"is_culprit"`
 	DisplayOrder         int      `json:"display_order"`
 	RelationshipToVictim string   `json:"relationship_to_victim"`
@@ -101,7 +106,7 @@ type Suspect struct {
 
 // SuspectInput is a new suspect; every field is set.
 type SuspectInput struct {
-	Name, Role, AvatarURL, InitialTestimony                                     string
+	Name, Role, AvatarURL, InitialTestimony, PublicKnowledge                    string
 	IsCulprit                                                                   bool
 	DisplayOrder                                                                int32
 	RelationshipToVictim, Persona, PublicAlibi, HiddenTruth, ConfessionTriggers string
@@ -110,7 +115,7 @@ type SuspectInput struct {
 
 // SuspectPatch changes only the non-nil fields.
 type SuspectPatch struct {
-	Name, Role, AvatarURL, InitialTestimony                                     *string
+	Name, Role, AvatarURL, InitialTestimony, PublicKnowledge                    *string
 	IsCulprit                                                                   *bool
 	DisplayOrder                                                                *int32
 	RelationshipToVictim, Persona, PublicAlibi, HiddenTruth, ConfessionTriggers *string
@@ -151,6 +156,7 @@ type CaseInput struct {
 	Hints                                                    []string
 	IsPublished                                              bool
 	LLMModel, MusicTrack                                     string
+	ChatTips                                                 []string
 }
 
 // CasePatch changes only the non-nil fields.
@@ -161,6 +167,7 @@ type CasePatch struct {
 	Hints                                                    []string // nil keeps the current hints; empty clears them
 	IsPublished                                              *bool
 	LLMModel, MusicTrack                                     *string
+	ChatTips                                                 []string // nil keeps the current tips; empty clears them
 }
 
 // Store is the PostgreSQL side; *PGStore implements it. Updates and deletes also
@@ -180,6 +187,9 @@ type Store interface {
 	UpdateCase(ctx context.Context, id string, p CasePatch) (c *Case, oldThumbnail string, err error)
 	// DeleteCase returns ErrInUse when anyone has played or is playing it.
 	DeleteCase(ctx context.Context, id string) (images []string, err error)
+	// ReorderCases sets the order of all cases (ids first to last). It returns
+	// ErrStaleOrder unless ids holds every case exactly once.
+	ReorderCases(ctx context.Context, ids []string) error
 
 	CreateSuspect(ctx context.Context, caseID string, in SuspectInput) (*Suspect, error)
 	UpdateSuspect(ctx context.Context, caseID, id string, p SuspectPatch) (s *Suspect, oldAvatar string, err error)
@@ -214,6 +224,26 @@ func (s *PGStore) tx(ctx context.Context, fn func(q *dbgen.Queries) error) error
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *PGStore) ReorderCases(ctx context.Context, ids []string) error {
+	return s.tx(ctx, func(q *dbgen.Queries) error {
+		total, err := q.AdminCountCases(ctx)
+		if err != nil {
+			return err
+		}
+		if int(total) != len(ids) {
+			return ErrStaleOrder
+		}
+		n, err := q.AdminReorderCases(ctx, ids)
+		if err != nil {
+			return err
+		}
+		if n != int64(total) { // an unknown id (the handler already refuses duplicates)
+			return ErrStaleOrder
+		}
+		return nil
+	})
 }
 
 func (s *PGStore) Role(ctx context.Context, userID string) (string, error) {
@@ -261,7 +291,7 @@ func (s *PGStore) GetCase(ctx context.Context, id string) (*CaseDetail, error) {
 		Case: Case{
 			ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, MainPlot: r.MainPlot, ThumbnailURL: r.ThumbnailUrl,
 			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), PenaltyTrophies: int(r.PenaltyTrophies),
-			Resolution: r.Resolution, Hints: r.Hints, IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, CreatedAt: r.CreatedAt,
+			Resolution: r.Resolution, Hints: r.Hints, IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, ChatTips: r.ChatTips, CreatedAt: r.CreatedAt,
 		},
 		Suspects: make([]Suspect, len(suspects)),
 		Scenes:   make([]Scene, len(scenes)),
@@ -286,10 +316,13 @@ func (s *PGStore) CreateCase(ctx context.Context, in CaseInput) (*Case, error) {
 	if in.Hints == nil {
 		in.Hints = []string{} // the column is NOT NULL
 	}
+	if in.ChatTips == nil {
+		in.ChatTips = []string{}
+	}
 	r, err := s.q.AdminCreateCase(ctx, dbgen.AdminCreateCaseParams{
 		Title: in.Title, Synopsis: in.Synopsis, MainPlot: in.MainPlot, ThumbnailUrl: in.ThumbnailURL,
 		DifficultyLevel: in.DifficultyLevel, RewardTrophies: in.RewardTrophies, PenaltyTrophies: in.PenaltyTrophies, Resolution: in.Resolution, Hints: in.Hints,
-		IsPublished: in.IsPublished, LlmModel: in.LLMModel, MusicTrack: in.MusicTrack,
+		IsPublished: in.IsPublished, LlmModel: in.LLMModel, MusicTrack: in.MusicTrack, ChatTips: in.ChatTips,
 	})
 	if err != nil {
 		return nil, mapErr(err)
@@ -297,7 +330,7 @@ func (s *PGStore) CreateCase(ctx context.Context, in CaseInput) (*Case, error) {
 	return &Case{
 		ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, MainPlot: r.MainPlot, ThumbnailURL: r.ThumbnailUrl,
 		DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), PenaltyTrophies: int(r.PenaltyTrophies), Resolution: r.Resolution, Hints: r.Hints,
-		IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, CreatedAt: r.CreatedAt,
+		IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, ChatTips: r.ChatTips, CreatedAt: r.CreatedAt,
 	}, nil
 }
 
@@ -310,7 +343,7 @@ func (s *PGStore) UpdateCase(ctx context.Context, id string, p CasePatch) (*Case
 		r, err := q.AdminUpdateCase(ctx, dbgen.AdminUpdateCaseParams{
 			ID: id, Title: p.Title, Synopsis: p.Synopsis, MainPlot: p.MainPlot, ThumbnailUrl: p.ThumbnailURL,
 			DifficultyLevel: p.DifficultyLevel, RewardTrophies: p.RewardTrophies, PenaltyTrophies: p.PenaltyTrophies, Resolution: p.Resolution, Hints: p.Hints,
-			IsPublished: p.IsPublished, LlmModel: p.LLMModel, MusicTrack: p.MusicTrack,
+			IsPublished: p.IsPublished, LlmModel: p.LLMModel, MusicTrack: p.MusicTrack, ChatTips: p.ChatTips,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -326,7 +359,7 @@ func (s *PGStore) UpdateCase(ctx context.Context, id string, p CasePatch) (*Case
 		c = &Case{
 			ID: r.ID, Title: r.Title, Synopsis: r.Synopsis, MainPlot: r.MainPlot, ThumbnailURL: r.ThumbnailUrl,
 			DifficultyLevel: r.DifficultyLevel, RewardTrophies: int(r.RewardTrophies), PenaltyTrophies: int(r.PenaltyTrophies), Resolution: r.Resolution, Hints: r.Hints,
-			IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, CreatedAt: r.CreatedAt,
+			IsPublished: r.IsPublished, LLMModel: r.LlmModel, MusicTrack: r.MusicTrack, ChatTips: r.ChatTips, CreatedAt: r.CreatedAt,
 		}
 		old = r.OldThumbnailUrl
 		return nil
@@ -383,7 +416,7 @@ func (s *PGStore) CreateSuspect(ctx context.Context, caseID string, in SuspectIn
 			CaseID: caseID, Name: in.Name, Role: in.Role, AvatarUrl: in.AvatarURL, InitialTestimony: in.InitialTestimony,
 			IsCulprit: in.IsCulprit, DisplayOrder: in.DisplayOrder, RelationshipToVictim: in.RelationshipToVictim,
 			Persona: in.Persona, PublicAlibi: in.PublicAlibi, HiddenTruth: in.HiddenTruth,
-			ConfessionTriggers: in.ConfessionTriggers, ConfessionKeywords: in.ConfessionKeywords,
+			ConfessionTriggers: in.ConfessionTriggers, ConfessionKeywords: in.ConfessionKeywords, PublicKnowledge: in.PublicKnowledge,
 		})
 		if err != nil {
 			if isPg(err, pgerrcode.ForeignKeyViolation) {
@@ -415,7 +448,7 @@ func (s *PGStore) UpdateSuspect(ctx context.Context, caseID, id string, p Suspec
 			ID: id, CaseID: caseID, Name: p.Name, Role: p.Role, AvatarUrl: p.AvatarURL, InitialTestimony: p.InitialTestimony,
 			IsCulprit: p.IsCulprit, DisplayOrder: p.DisplayOrder, RelationshipToVictim: p.RelationshipToVictim,
 			Persona: p.Persona, PublicAlibi: p.PublicAlibi, HiddenTruth: p.HiddenTruth,
-			ConfessionTriggers: p.ConfessionTriggers, ConfessionKeywords: p.ConfessionKeywords,
+			ConfessionTriggers: p.ConfessionTriggers, ConfessionKeywords: p.ConfessionKeywords, PublicKnowledge: p.PublicKnowledge,
 		})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
@@ -427,6 +460,7 @@ func (s *PGStore) UpdateSuspect(ctx context.Context, caseID, id string, p Suspec
 			ID: r.ID, CaseID: r.CaseID, Name: r.Name, Role: r.Role, AvatarUrl: r.AvatarUrl, InitialTestimony: r.InitialTestimony,
 			IsCulprit: r.IsCulprit, DisplayOrder: r.DisplayOrder, RelationshipToVictim: r.RelationshipToVictim, Persona: r.Persona,
 			PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth, ConfessionTriggers: r.ConfessionTriggers, ConfessionKeywords: r.ConfessionKeywords,
+			PublicKnowledge: r.PublicKnowledge,
 		})
 		old = r.OldAvatarUrl
 		return afterSuspectWrite(ctx, q, &out)
@@ -555,7 +589,7 @@ func suspectOf(r dbgen.Suspect) Suspect {
 	}
 	return Suspect{
 		ID: r.ID, CaseID: r.CaseID, Name: r.Name, Role: r.Role, AvatarURL: r.AvatarUrl, InitialTestimony: r.InitialTestimony,
-		IsCulprit: r.IsCulprit, DisplayOrder: int(r.DisplayOrder), RelationshipToVictim: r.RelationshipToVictim,
+		PublicKnowledge: r.PublicKnowledge, IsCulprit: r.IsCulprit, DisplayOrder: int(r.DisplayOrder), RelationshipToVictim: r.RelationshipToVictim,
 		Persona: r.Persona, PublicAlibi: r.PublicAlibi, HiddenTruth: r.HiddenTruth,
 		ConfessionTriggers: r.ConfessionTriggers, ConfessionKeywords: kw,
 	}

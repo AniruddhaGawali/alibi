@@ -35,9 +35,12 @@ type fakeStore struct {
 	caseImages []string
 	searched   *string
 	balance    int64 // the player's balance GetUser reports
+	order      []string
 }
 
 type fakeWallet struct{ granted []int64 }
+
+func (w *fakeWallet) MaxTokens(context.Context) int64 { return 10 }
 
 func (w *fakeWallet) Grant(_ context.Context, _ string, amount int64) (int64, error) {
 	w.granted = append(w.granted, amount)
@@ -85,6 +88,14 @@ func (f *fakeStore) UpdateCase(_ context.Context, id string, p CasePatch) (*Case
 	}
 	return c, f.oldImage, nil
 }
+func (f *fakeStore) ReorderCases(_ context.Context, ids []string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.order = ids
+	return nil
+}
+
 func (f *fakeStore) DeleteCase(_ context.Context, id string) ([]string, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -186,8 +197,10 @@ func newTestHandler(store *fakeStore, models *fakeModels, opts ...Option) http.H
 	mux := http.NewServeMux()
 	a := h.AdminOnly
 	mux.HandleFunc("GET /api/admin/models", a(h.ListModels))
+	mux.HandleFunc("PUT /api/admin/cases/order", a(h.ReorderCases))
 	mux.HandleFunc("GET /api/admin/users", a(h.SearchUsers))
 	mux.HandleFunc("POST /api/admin/users/{id}/tokens", a(h.GrantTokens))
+	mux.HandleFunc("POST /api/admin/users/{id}/reset-limits", a(h.ResetLimits))
 	mux.HandleFunc("GET /api/admin/config", a(h.GetConfig))
 	mux.HandleFunc("PUT /api/admin/config", a(h.UpdateConfig))
 	mux.HandleFunc("POST /api/admin/upload", a(h.Upload))
@@ -379,6 +392,33 @@ func TestHints(t *testing.T) {
 	}
 }
 
+func TestChatTips(t *testing.T) {
+	// Up to five tips are saved; none is fine.
+	s := admin()
+	if rec := serve(s, &fakeModels{}, "POST", "/api/admin/cases", newCase+`,"chat_tips":["ask about the clock","check the garden"]}`); rec.Code != 201 || len(s.created.ChatTips) != 2 {
+		t.Fatalf("two tips: %d %s %+v", rec.Code, rec.Body, s.created)
+	}
+	// Too many, empty or oversized tips are refused.
+	for name, body := range map[string]string{
+		"six":   newCase + `,"chat_tips":["a","b","c","d","e","f"]}`,
+		"empty": newCase + `,"chat_tips":["a",""]}`,
+		"long":  newCase + `,"chat_tips":["` + strings.Repeat("x", 301) + `"]}`,
+	} {
+		if rec := serve(admin(), &fakeModels{}, "POST", "/api/admin/cases", body); rec.Code != 422 {
+			t.Errorf("%s: status %d, want 422", name, rec.Code)
+		}
+	}
+	// PATCH: [] clears them, omitting them leaves them alone.
+	s = admin()
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"chat_tips":[]}`); rec.Code != 200 || s.patched.ChatTips == nil || len(s.patched.ChatTips) != 0 {
+		t.Fatalf("clear: %d %+v", rec.Code, s.patched)
+	}
+	s = admin()
+	if rec := serve(s, &fakeModels{}, "PATCH", "/api/admin/cases/"+caseID, `{"title":"x"}`); rec.Code != 200 || s.patched.ChatTips != nil {
+		t.Fatalf("omitted: %d %+v", rec.Code, s.patched)
+	}
+}
+
 func TestDeleteCase(t *testing.T) {
 	imgs := &fakeImages{}
 	owned := imgs.PublicURL("cases/" + caseID + "/thumbnail/0e3c1a4e-2f1b-4b8e-9d6a-1c2b3d4e5f60.webp")
@@ -481,18 +521,20 @@ func TestConfig(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"daily_tokens":10`) || !strings.Contains(rec.Body.String(), `"token_reset_time":"00:00"`) {
 		t.Fatalf("get: %d %s", rec.Code, rec.Body)
 	}
-	rec = serveWith(h, "PUT", "/api/admin/config", `{"daily_tokens":7,"token_reset_time":"04:30","token_reset_timezone":"Asia/Kolkata"}`)
-	if rec.Code != 200 || fs.saved == nil || fs.saved.DailyTokens != 7 || fs.saved.ResetTime != "04:30" || fs.saved.Timezone != "Asia/Kolkata" {
+	rec = serveWith(h, "PUT", "/api/admin/config", `{"daily_tokens":20,"max_tokens":25,"token_reset_time":"04:30","token_reset_timezone":"Asia/Kolkata"}`)
+	if rec.Code != 200 || fs.saved == nil || fs.saved.DailyTokens != 20 || fs.saved.MaxTokens != 25 || fs.saved.ResetTime != "04:30" || fs.saved.Timezone != "Asia/Kolkata" {
 		t.Fatalf("put: %d %s %+v", rec.Code, rec.Body, fs.saved)
 	}
 	for name, body := range map[string]string{
-		"zero tokens": `{"daily_tokens":0,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
-		"too many":    `{"daily_tokens":11,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
-		"bad time":    `{"daily_tokens":5,"token_reset_time":"24:00","token_reset_timezone":"UTC"}`,
-		"no colon":    `{"daily_tokens":5,"token_reset_time":"0430","token_reset_timezone":"UTC"}`,
-		"bad zone":    `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"Mars/Olympus"}`,
-		"local zone":  `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"Local"}`,
-		"missing":     `{"daily_tokens":5}`,
+		"zero tokens":    `{"daily_tokens":0,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"daily over max": `{"daily_tokens":11,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"max too high":   `{"daily_tokens":5,"max_tokens":101,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"no max":         `{"daily_tokens":5,"token_reset_time":"04:30","token_reset_timezone":"UTC"}`,
+		"bad time":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"24:00","token_reset_timezone":"UTC"}`,
+		"no colon":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"0430","token_reset_timezone":"UTC"}`,
+		"bad zone":       `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"Mars/Olympus"}`,
+		"local zone":     `{"daily_tokens":5,"max_tokens":10,"token_reset_time":"04:30","token_reset_timezone":"Local"}`,
+		"missing":        `{"daily_tokens":5}`,
 	} {
 		fs.saved = nil
 		if rec := serveWith(h, "PUT", "/api/admin/config", body); rec.Code != 422 || fs.saved != nil {
@@ -618,7 +660,7 @@ func TestGrantTokens(t *testing.T) {
 		status     int
 	}{
 		"zero":      {"/api/admin/users/" + suspectID + "/tokens", `{"amount":0}`, 422},
-		"too many":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":11}`, 422},
+		"too many":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":101}`, 422}, // above user.TokenCeiling
 		"negative":  {"/api/admin/users/" + suspectID + "/tokens", `{"amount":-3}`, 422},
 		"bad id":    {"/api/admin/users/nope/tokens", `{"amount":1}`, 400},
 		"no player": {"/api/admin/users/" + caseID + "/tokens", `{"amount":1}`, 404},
@@ -636,6 +678,35 @@ func TestGrantTokens(t *testing.T) {
 	}
 }
 
+type fakeLimits struct{ reset []string }
+
+func (f *fakeLimits) ResetLimits(_ context.Context, id string) error {
+	f.reset = append(f.reset, id)
+	return nil
+}
+
+func TestResetLimits(t *testing.T) {
+	l := &fakeLimits{}
+	h := newTestHandler(admin(), &fakeModels{}, WithLimitReset(l))
+	path := "/api/admin/users/" + suspectID + "/reset-limits"
+	if rec := serveWith(h, "POST", path, ""); rec.Code != 200 || len(l.reset) != 1 || l.reset[0] != suspectID {
+		t.Fatalf("status %d %s %v", rec.Code, rec.Body, l.reset)
+	}
+	l.reset = nil
+	if rec := serveWith(h, "POST", "/api/admin/users/nope/reset-limits", ""); rec.Code != 400 || len(l.reset) != 0 {
+		t.Fatalf("bad id: %d", rec.Code)
+	}
+	if rec := serveWith(h, "POST", "/api/admin/users/"+caseID+"/reset-limits", ""); rec.Code != 404 || len(l.reset) != 0 {
+		t.Fatalf("no player: %d", rec.Code)
+	}
+	if rec := serve(&fakeStore{}, &fakeModels{}, "POST", path, ""); rec.Code != 403 {
+		t.Fatalf("player: %d", rec.Code)
+	}
+	if rec := serve(admin(), &fakeModels{}, "POST", path, ""); rec.Code != 503 {
+		t.Fatalf("no guard: %d", rec.Code)
+	}
+}
+
 func TestSearchUsers(t *testing.T) {
 	s := admin()
 	rec := serve(s, &fakeModels{}, "GET", "/api/admin/users?q=+rook+", "")
@@ -644,5 +715,35 @@ func TestSearchUsers(t *testing.T) {
 	}
 	if rec := serve(admin(), &fakeModels{}, "GET", "/api/admin/users?q="+strings.Repeat("x", 101), ""); rec.Code != 400 {
 		t.Fatalf("long query: %d", rec.Code)
+	}
+}
+
+func TestReorderCases(t *testing.T) {
+	const a, b = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"
+	s := admin()
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+b+`","`+a+`"]}`); rec.Code != 200 || len(s.order) != 2 || s.order[0] != b {
+		t.Fatalf("reorder: %d %s %v", rec.Code, rec.Body, s.order)
+	}
+	// Empty, duplicated or malformed lists never reach the store.
+	for name, body := range map[string]string{
+		"empty":     `{"case_ids":[]}`,
+		"duplicate": `{"case_ids":["` + a + `","` + a + `"]}`,
+		"not uuid":  `{"case_ids":["x"]}`,
+	} {
+		s := admin()
+		if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", body); rec.Code != 422 || s.order != nil {
+			t.Errorf("%s: status %d", name, rec.Code)
+		}
+	}
+	// A list that no longer matches the cases is a conflict.
+	s = admin()
+	s.err = ErrStaleOrder
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+a+`"]}`); rec.Code != 409 {
+		t.Fatalf("stale: %d", rec.Code)
+	}
+	// Players cannot reorder.
+	s = &fakeStore{}
+	if rec := serve(s, &fakeModels{}, "PUT", "/api/admin/cases/order", `{"case_ids":["`+a+`"]}`); rec.Code != 403 || s.order != nil {
+		t.Fatalf("non-admin: %d", rec.Code)
 	}
 }

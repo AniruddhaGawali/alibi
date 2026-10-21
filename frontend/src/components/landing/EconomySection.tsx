@@ -1,14 +1,17 @@
 import { RiCoinsLine, RiLightbulbLine, RiRefreshLine, RiTrophyLine } from '@remixicon/react'
+import { useGameRules } from '@/api/game'
 import Reveal from './Reveal'
 
-const RULES = [
-  { icon: RiCoinsLine, big: '10', title: 'Tokens a day', text: 'Every question to a suspect costs 1 token. Spend them wisely.' },
-  { icon: RiRefreshLine, big: '00:00', title: 'Daily reset', text: 'Tokens refill every day. Unused ones do not roll over.' },
-  { icon: RiTrophyLine, big: '+/−', title: 'Trophies', text: 'A correct accusation wins the case reward. A wrong one costs trophies.' },
-  { icon: RiLightbulbLine, big: '1·3·6', title: 'Hints', text: 'Stuck? Reveal up to 3 hints. Each one is taken off your reward only if you win.' },
-]
-
 export default function EconomySection() {
+  // the admin-set numbers; the prerendered page shows the defaults until they load
+  const rules = useGameRules()
+  const RULES = [
+    { icon: RiCoinsLine, big: String(rules.daily_tokens), title: 'Tokens a day', text: `Every question to a suspect costs 1 token. You can hold up to ${rules.max_tokens}. Spend them wisely.` },
+    { icon: RiRefreshLine, big: rules.token_reset_time, title: 'Daily reset', text: `Tokens refill every day (${rules.token_reset_timezone}). Unused ones do not roll over.` },
+    { icon: RiTrophyLine, big: '+/−', title: 'Trophies', text: 'A correct accusation wins the case reward. A wrong one costs trophies.' },
+    { icon: RiLightbulbLine, big: '1·3·6', title: 'Hints', text: 'Stuck? Reveal up to 3 hints. Each one is taken off your reward only if you win.' },
+  ]
+
   return (
     <section className="landing-band border-y py-20">
       <div className="mx-auto max-w-6xl px-6">
@@ -28,6 +31,11 @@ export default function EconomySection() {
             </Reveal>
           ))}
         </div>
+        <Reveal className="mt-8 text-center">
+          <p className="font-typewriter text-sm text-muted-foreground">
+            The token numbers are set by the game masters and may change from time to time; this page always shows the current ones.
+          </p>
+        </Reveal>
       </div>
     </section>
   )

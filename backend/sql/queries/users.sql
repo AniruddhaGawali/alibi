@@ -14,3 +14,11 @@ SELECT * FROM users WHERE id = @id;
 SELECT
     EXISTS (SELECT 1 FROM users WHERE lower(email) = lower(@email))       AS email_taken,
     EXISTS (SELECT 1 FROM users WHERE lower(username) = lower(@username)) AS username_taken;
+
+-- name: SetPlayerMode :execrows
+-- users_player_mode_valid rejects anything but 'investigator' / 'master_sleuth'.
+UPDATE users SET player_mode = @player_mode WHERE id = @id;
+
+-- name: SetUsername :execrows
+-- users_username_key (unique on lower(username)) rejects a name someone else holds.
+UPDATE users SET username = @username WHERE id = @id;

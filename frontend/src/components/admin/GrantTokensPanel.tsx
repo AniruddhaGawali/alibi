@@ -3,16 +3,17 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { RiCoinsLine, RiSearchLine } from '@remixicon/react'
+import { RiCoinsLine, RiRestartLine, RiSearchLine } from '@remixicon/react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { FieldGroup } from '@/components/ui/field'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { FormInput, FormSelect } from '@/components/form'
+import { useGameRules } from '@/api/game'
 import {
-  MAX_TOKEN_BALANCE,
   useGrantAdminTokensMutation,
+  useResetAdminUserLimitsMutation,
   useSearchAdminUsersQuery,
   type AdminPlayer,
 } from '@/api/admin'
@@ -21,15 +22,20 @@ import { cn } from '@/lib/utils'
 const searchSchema = z.object({ q: z.string().trim().max(100, 'At most 100 characters') })
 type SearchValues = z.infer<typeof searchSchema>
 
-const grantSchema = z.object({ amount: z.string().regex(/^([1-9]|10)$/, 'Pick how many tokens') })
+const grantSchema = z.object({ amount: z.string().regex(/^[1-9]\d{0,2}$/, 'Pick how many tokens') })
 type GrantValues = z.infer<typeof grantSchema>
 
 /** Find a player by username or email and give them question tokens now. */
 export default function GrantTokensPanel() {
   const [q, setQ] = useState('')
   const [selectedId, setSelectedId] = useState<string>()
+  const maxTokens = useGameRules().max_tokens
   const { data: players, isFetching, error } = useSearchAdminUsersQuery(q)
   const selected = players?.find((p) => p.id === selectedId)
+  const resetLimits = useResetAdminUserLimitsMutation({
+    onSuccess: (_r, id) => toast.success(`Interrogation limits reset for ${players?.find((p) => p.id === id)?.username ?? 'the player'}`),
+    onError: (e) => toast.error(e.message),
+  })
 
   const search = useForm<SearchValues>({ resolver: zodResolver(searchSchema), defaultValues: { q: '' } })
 
@@ -78,7 +84,7 @@ export default function GrantTokensPanel() {
                   <p className="text-xs text-muted-foreground">{p.email}</p>
                 </TableCell>
                 <TableCell className="text-right text-gold">
-                  {p.token_balance} / {MAX_TOKEN_BALANCE}
+                  {p.token_balance} / {maxTokens}
                 </TableCell>
                 <TableCell className="text-right">{p.trophies}</TableCell>
                 <TableCell className="text-right">
@@ -86,11 +92,21 @@ export default function GrantTokensPanel() {
                     variant={p.id === selectedId ? 'default' : 'ghost'}
                     size="sm"
                     onClick={() => setSelectedId(p.id)}
-                    disabled={p.token_balance >= MAX_TOKEN_BALANCE}
-                    title={p.token_balance >= MAX_TOKEN_BALANCE ? 'Already holds the maximum' : undefined}
+                    disabled={p.token_balance >= maxTokens}
+                    title={p.token_balance >= maxTokens ? 'Already holds the maximum' : undefined}
                   >
                     <RiCoinsLine className="size-4" aria-hidden />
                     Give tokens
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => resetLimits.mutate(p.id)}
+                    disabled={resetLimits.isPending && resetLimits.variables === p.id}
+                    title="Clear today's interrogation limit so they can question suspects again"
+                  >
+                    <RiRestartLine className="size-4" aria-hidden />
+                    Reset limits
                   </Button>
                 </TableCell>
               </TableRow>
@@ -105,7 +121,8 @@ export default function GrantTokensPanel() {
 }
 
 function GrantForm({ player, onDone }: { player: AdminPlayer; onDone: () => void }) {
-  const room = Math.max(MAX_TOKEN_BALANCE - player.token_balance, 1)
+  const maxTokens = useGameRules().max_tokens
+  const room = Math.max(maxTokens - player.token_balance, 1)
   const { control, handleSubmit } = useForm<GrantValues>({
     resolver: zodResolver(grantSchema),
     defaultValues: { amount: String(room) },
@@ -136,7 +153,7 @@ function GrantForm({ player, onDone }: { player: AdminPlayer; onDone: () => void
           name="amount"
           label="Tokens"
           options={options}
-          description={`They hold ${player.token_balance}; nobody can hold more than ${MAX_TOKEN_BALANCE}. Granted tokens last until the next daily reset, which sets everyone back to the daily allowance.`}
+          description={`They hold ${player.token_balance}; nobody can hold more than ${maxTokens}. Granted tokens last until the next daily reset, which sets everyone back to the daily allowance.`}
         />
         <div className="flex gap-3">
           <Button type="submit" disabled={grant.isPending}>

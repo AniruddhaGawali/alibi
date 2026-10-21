@@ -46,7 +46,7 @@ export default function StoryCard({
 
   return (
     <div
-      className={cn('relative z-10 pt-2 transition-transform duration-200', !locked && 'hover:-translate-y-1', shaking && 'shake')}
+      className={cn('relative z-10 flex h-full flex-col pt-2 transition-transform duration-200', !locked && 'hover:-translate-y-1', shaking && 'shake')}
       onClick={() => {
         if (!locked) return
         play('error')
@@ -56,7 +56,7 @@ export default function StoryCard({
     >
       <Tape />
       <Pin seed={story.id} />
-      <Card className="relative pt-0">
+      <Card className="relative flex-1 pt-0">
         {story.thumbnail_url ? (
           <img src={story.thumbnail_url} alt="" loading="lazy" className="aspect-video w-full object-cover" />
         ) : (
@@ -71,7 +71,7 @@ export default function StoryCard({
             {locked ? <Redacted>{story.synopsis}</Redacted> : story.synopsis}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex gap-4 text-sm">
+        <CardContent className="flex flex-1 items-end gap-4 text-sm">
           <span className="flex items-center gap-1 text-gold" title="Trophies for solving it">
             <RiTrophyLine className="size-4" aria-hidden />
             {story.reward_trophies}

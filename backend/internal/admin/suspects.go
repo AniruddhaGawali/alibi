@@ -14,7 +14,8 @@ type createSuspectReq struct {
 	Role                 string   `json:"role" validate:"required,max=200"`
 	AvatarURL            string   `json:"avatar_url" validate:"omitempty,https_url,max=2048"`
 	InitialTestimony     string   `json:"initial_testimony" validate:"required,max=4000"`
-	IsCulprit            bool     `json:"is_culprit"` // marking one moves the flag off any other suspect
+	PublicKnowledge      string   `json:"public_knowledge" validate:"max=4000"` // shown to investigators only, never a secret
+	IsCulprit            bool     `json:"is_culprit"`                           // marking one moves the flag off any other suspect
 	DisplayOrder         int32    `json:"display_order" validate:"min=0,max=1000"`
 	RelationshipToVictim string   `json:"relationship_to_victim" validate:"max=500"`
 	Persona              string   `json:"persona" validate:"max=4000"`
@@ -29,6 +30,7 @@ type updateSuspectReq struct {
 	Role                 *string   `json:"role" validate:"omitempty,min=1,max=200"`
 	AvatarURL            *string   `json:"avatar_url" validate:"omitempty,https_url,max=2048"`
 	InitialTestimony     *string   `json:"initial_testimony" validate:"omitempty,min=1,max=4000"`
+	PublicKnowledge      *string   `json:"public_knowledge" validate:"omitempty,max=4000"` // "" clears it
 	IsCulprit            *bool     `json:"is_culprit"`
 	DisplayOrder         *int32    `json:"display_order" validate:"omitempty,min=0,max=1000"`
 	RelationshipToVictim *string   `json:"relationship_to_victim" validate:"omitempty,max=500"`
@@ -65,9 +67,9 @@ func (h *Handler) CreateSuspect(w http.ResponseWriter, r *http.Request) {
 	}
 	s, err := h.store.CreateSuspect(r.Context(), caseID, SuspectInput{
 		Name: req.Name, Role: req.Role, AvatarURL: req.AvatarURL, InitialTestimony: req.InitialTestimony,
-		IsCulprit: req.IsCulprit, DisplayOrder: req.DisplayOrder, RelationshipToVictim: req.RelationshipToVictim,
-		Persona: req.Persona, PublicAlibi: req.PublicAlibi, HiddenTruth: req.HiddenTruth,
-		ConfessionTriggers: req.ConfessionTriggers, ConfessionKeywords: req.ConfessionKeywords,
+		PublicKnowledge: req.PublicKnowledge, IsCulprit: req.IsCulprit, DisplayOrder: req.DisplayOrder,
+		RelationshipToVictim: req.RelationshipToVictim, Persona: req.Persona, PublicAlibi: req.PublicAlibi,
+		HiddenTruth: req.HiddenTruth, ConfessionTriggers: req.ConfessionTriggers, ConfessionKeywords: req.ConfessionKeywords,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "suspect", "create suspect failed")
@@ -103,9 +105,9 @@ func (h *Handler) UpdateSuspect(w http.ResponseWriter, r *http.Request) {
 	}
 	s, old, err := h.store.UpdateSuspect(r.Context(), caseID, id, SuspectPatch{
 		Name: req.Name, Role: req.Role, AvatarURL: req.AvatarURL, InitialTestimony: req.InitialTestimony,
-		IsCulprit: req.IsCulprit, DisplayOrder: req.DisplayOrder, RelationshipToVictim: req.RelationshipToVictim,
-		Persona: req.Persona, PublicAlibi: req.PublicAlibi, HiddenTruth: req.HiddenTruth,
-		ConfessionTriggers: req.ConfessionTriggers, ConfessionKeywords: keywords,
+		PublicKnowledge: req.PublicKnowledge, IsCulprit: req.IsCulprit, DisplayOrder: req.DisplayOrder,
+		RelationshipToVictim: req.RelationshipToVictim, Persona: req.Persona, PublicAlibi: req.PublicAlibi,
+		HiddenTruth: req.HiddenTruth, ConfessionTriggers: req.ConfessionTriggers, ConfessionKeywords: keywords,
 	})
 	if err != nil {
 		h.storeFailed(w, r, err, "suspect", "update suspect failed")

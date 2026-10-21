@@ -26,7 +26,7 @@ func (f *fakeStore) GetTokenBalance(_ context.Context, id string) (int64, error)
 	return n, nil
 }
 
-func (f *fakeStore) AdjustTokenBalance(_ context.Context, id string, d int64) (int64, error) {
+func (f *fakeStore) AdjustTokenBalance(_ context.Context, id string, d, maxTokens int64) (int64, error) {
 	n, ok := f.bal[id]
 	if !ok {
 		return 0, user.ErrNotFound
@@ -34,7 +34,11 @@ func (f *fakeStore) AdjustTokenBalance(_ context.Context, id string, d int64) (i
 	if n+d < 0 {
 		return 0, user.ErrInsufficientTokens
 	}
-	f.bal[id] = min(n+d, MaxBalance) // the real store caps too
+	if d > 0 {
+		f.bal[id] = min(n+d, max(maxTokens, n)) // the real store caps grants, and never lowers a balance above the cap
+	} else {
+		f.bal[id] = n + d
+	}
 	return f.bal[id], nil
 }
 
@@ -55,7 +59,7 @@ func newService(t *testing.T) (*Service, *fakeStore, *miniredis.Miniredis) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 	st := &fakeStore{bal: map[string]int64{"u1": 0}}
-	return New(st, rdb), st, mr
+	return New(st, rdb, nil), st, mr
 }
 
 func TestBalanceReadsThroughToPostgresThenCache(t *testing.T) {

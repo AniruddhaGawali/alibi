@@ -14,9 +14,13 @@ export interface UserProfile {
   trophies: number
   token_balance: number
   role: UserRole
+  player_mode: PlayerMode
 }
 
 export type UserRole = 'user' | 'admin'
+
+/** Difficulty mode: investigators see suspect backgrounds and chat tips, master sleuths go in blind. */
+export type PlayerMode = 'investigator' | 'master_sleuth'
 
 /** Either a custom image (max 1 MB) or the number (1-4) of a default avatar. */
 export type SetAvatarInput = { file: File } | { avatar: number }
@@ -40,7 +44,20 @@ export const userApi = createApi({
       },
       invalidatesTags: ['User'],
     }),
+    setPlayerMode: build.mutation<{ player_mode: PlayerMode }, PlayerMode>({
+      query: (mode) => ({ url: '/api/user/mode', method: 'PUT', body: { mode } }),
+      invalidatesTags: ['User'],
+    }),
+    setUsername: build.mutation<{ username: string }, string>({
+      query: (username) => ({ url: '/api/user/username', method: 'PUT', body: { username } }),
+      invalidatesTags: ['User', 'Leaderboard'],
+    }),
   }),
 })
 
-export const { useGetUserDataQuery, useSetAvatarMutation } = userApi
+export const {
+  useGetUserDataQuery,
+  useSetAvatarMutation,
+  useSetPlayerModeMutation,
+  useSetUsernameMutation,
+} = userApi

@@ -1,7 +1,8 @@
 -- name: GetCaseBriefing :one
 -- A published case's briefing text. Unpublished cases do not exist for players.
--- hints_total only counts the hints; their text is never selected here.
-SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, cardinality(hints)::int AS hints_total
+-- hints_total only counts the hints; their text is never selected here. chat_tips are
+-- public (shown to investigators under the chat box).
+SELECT id, title, synopsis, main_plot, difficulty_level, reward_trophies, cardinality(hints)::int AS hints_total, chat_tips
 FROM stories
 WHERE id = @id AND is_published;
 
@@ -14,7 +15,7 @@ ORDER BY display_order, id;
 -- name: ListCaseSuspects :many
 -- Columns are listed explicitly: is_culprit (and anything else internal) must
 -- never be selected by a query that feeds a client response.
-SELECT id, name, role, avatar_url, initial_testimony
+SELECT id, name, role, avatar_url, initial_testimony, public_knowledge
 FROM suspects
 WHERE case_id = @case_id
 ORDER BY display_order, name;

@@ -99,13 +99,26 @@ func (q *Queries) AdminClearCulprit(ctx context.Context, arg AdminClearCulpritPa
 	return err
 }
 
+const adminCountCases = `-- name: AdminCountCases :one
+SELECT count(*)::int FROM stories
+`
+
+func (q *Queries) AdminCountCases(ctx context.Context) (int32, error) {
+	row := q.db.QueryRow(ctx, adminCountCases)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const adminCreateCase = `-- name: AdminCreateCase :one
 INSERT INTO stories (title, synopsis, main_plot, thumbnail_url, difficulty_level,
-                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track)
+                     reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, chat_tips, display_order)
 VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8, $9::text[], $10, $11, $12)
+        $6, $7, $8, $9::text[], $10, $11, $12, $13::text[],
+        -- a new case goes to the top of the list, like before cases had an order
+        (SELECT COALESCE(min(display_order), 1) - 1 FROM stories))
 RETURNING id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at
+          reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips
 `
 
 type AdminCreateCaseParams struct {
@@ -121,6 +134,7 @@ type AdminCreateCaseParams struct {
 	IsPublished     bool
 	LlmModel        string
 	MusicTrack      string
+	ChatTips        []string
 }
 
 type AdminCreateCaseRow struct {
@@ -138,6 +152,7 @@ type AdminCreateCaseRow struct {
 	LlmModel        string
 	MusicTrack      string
 	CreatedAt       time.Time
+	ChatTips        []string
 }
 
 func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams) (AdminCreateCaseRow, error) {
@@ -154,6 +169,7 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		arg.IsPublished,
 		arg.LlmModel,
 		arg.MusicTrack,
+		arg.ChatTips,
 	)
 	var i AdminCreateCaseRow
 	err := row.Scan(
@@ -171,6 +187,7 @@ func (q *Queries) AdminCreateCase(ctx context.Context, arg AdminCreateCaseParams
 		&i.LlmModel,
 		&i.MusicTrack,
 		&i.CreatedAt,
+		&i.ChatTips,
 	)
 	return i, err
 }
@@ -208,11 +225,13 @@ func (q *Queries) AdminCreateScene(ctx context.Context, arg AdminCreateScenePara
 
 const adminCreateSuspect = `-- name: AdminCreateSuspect :one
 INSERT INTO suspects (case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-                      relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords)
+                      relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords,
+                      public_knowledge)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
-        $8, $9, $10, $11, $12, $13::text[])
+        $8, $9, $10, $11, $12, $13::text[],
+        $14)
 RETURNING id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-          relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords
+          relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords, public_knowledge
 `
 
 type AdminCreateSuspectParams struct {
@@ -229,6 +248,7 @@ type AdminCreateSuspectParams struct {
 	HiddenTruth          string
 	ConfessionTriggers   string
 	ConfessionKeywords   []string
+	PublicKnowledge      string
 }
 
 func (q *Queries) AdminCreateSuspect(ctx context.Context, arg AdminCreateSuspectParams) (Suspect, error) {
@@ -246,6 +266,7 @@ func (q *Queries) AdminCreateSuspect(ctx context.Context, arg AdminCreateSuspect
 		arg.HiddenTruth,
 		arg.ConfessionTriggers,
 		arg.ConfessionKeywords,
+		arg.PublicKnowledge,
 	)
 	var i Suspect
 	err := row.Scan(
@@ -263,6 +284,7 @@ func (q *Queries) AdminCreateSuspect(ctx context.Context, arg AdminCreateSuspect
 		&i.HiddenTruth,
 		&i.ConfessionTriggers,
 		&i.ConfessionKeywords,
+		&i.PublicKnowledge,
 	)
 	return i, err
 }
@@ -318,7 +340,7 @@ func (q *Queries) AdminDeleteSuspect(ctx context.Context, arg AdminDeleteSuspect
 
 const adminGetCase = `-- name: AdminGetCase :one
 SELECT id, title, synopsis, main_plot, thumbnail_url, difficulty_level,
-       reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at
+       reward_trophies, penalty_trophies, resolution, hints, is_published, llm_model, music_track, created_at, chat_tips
 FROM stories
 WHERE id = $1
 `
@@ -338,6 +360,7 @@ type AdminGetCaseRow struct {
 	LlmModel        string
 	MusicTrack      string
 	CreatedAt       time.Time
+	ChatTips        []string
 }
 
 func (q *Queries) AdminGetCase(ctx context.Context, id string) (AdminGetCaseRow, error) {
@@ -358,6 +381,7 @@ func (q *Queries) AdminGetCase(ctx context.Context, id string) (AdminGetCaseRow,
 		&i.LlmModel,
 		&i.MusicTrack,
 		&i.CreatedAt,
+		&i.ChatTips,
 	)
 	return i, err
 }
@@ -400,7 +424,7 @@ SELECT s.id, s.title, s.synopsis, s.thumbnail_url, s.difficulty_level, s.reward_
        (SELECT count(*) FROM suspects p WHERE p.case_id = s.id AND p.is_culprit)::int AS culprit_count,
        (SELECT count(*) FROM case_results r WHERE r.story_id = s.id)::int             AS plays
 FROM stories s
-ORDER BY s.created_at DESC, s.id
+ORDER BY s.display_order, s.created_at DESC, s.id
 `
 
 type AdminListCasesRow struct {
@@ -420,7 +444,7 @@ type AdminListCasesRow struct {
 	Plays           int32
 }
 
-// Every case, drafts included, newest first, with what the list page needs to show
+// Every case, drafts included, in display order (then newest first), with what the list page needs to show
 // whether it is ready to publish.
 func (q *Queries) AdminListCases(ctx context.Context) ([]AdminListCasesRow, error) {
 	rows, err := q.db.Query(ctx, adminListCases)
@@ -492,7 +516,7 @@ func (q *Queries) AdminListScenes(ctx context.Context, caseID string) ([]CaseSce
 
 const adminListSuspects = `-- name: AdminListSuspects :many
 SELECT id, case_id, name, role, avatar_url, initial_testimony, is_culprit, display_order,
-       relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords
+       relationship_to_victim, persona, public_alibi, hidden_truth, confession_triggers, confession_keywords, public_knowledge
 FROM suspects
 WHERE case_id = $1
 ORDER BY display_order, name
@@ -523,6 +547,7 @@ func (q *Queries) AdminListSuspects(ctx context.Context, caseID string) ([]Suspe
 			&i.HiddenTruth,
 			&i.ConfessionTriggers,
 			&i.ConfessionKeywords,
+			&i.PublicKnowledge,
 		); err != nil {
 			return nil, err
 		}
@@ -532,6 +557,22 @@ func (q *Queries) AdminListSuspects(ctx context.Context, caseID string) ([]Suspe
 		return nil, err
 	}
 	return items, nil
+}
+
+const adminReorderCases = `-- name: AdminReorderCases :execrows
+UPDATE stories s SET display_order = o.ord::int
+FROM unnest($1::uuid[]) WITH ORDINALITY AS o(id, ord)
+WHERE s.id = o.id
+`
+
+// Gives each listed case its position in the list (1, 2, ...). The store runs it in a
+// transaction and checks that every case was listed, so no two cases share a position.
+func (q *Queries) AdminReorderCases(ctx context.Context, ids []string) (int64, error) {
+	result, err := q.db.Exec(ctx, adminReorderCases, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const adminSearchUsers = `-- name: AdminSearchUsers :many
@@ -590,7 +631,7 @@ func (q *Queries) AdminSearchUsers(ctx context.Context, arg AdminSearchUsersPara
 }
 
 const adminUpdateCase = `-- name: AdminUpdateCase :one
-WITH old AS (SELECT o.id, o.thumbnail_url FROM stories o WHERE o.id = $13 FOR UPDATE)
+WITH old AS (SELECT o.id, o.thumbnail_url FROM stories o WHERE o.id = $14 FOR UPDATE)
 UPDATE stories s SET
     title            = COALESCE($1::text, s.title),
     synopsis         = COALESCE($2::text, s.synopsis),
@@ -603,12 +644,13 @@ UPDATE stories s SET
     hints            = COALESCE($9::text[], s.hints),
     is_published     = COALESCE($10::boolean, s.is_published),
     llm_model        = COALESCE($11::text, s.llm_model),
-    music_track      = COALESCE($12::text, s.music_track)
+    music_track      = COALESCE($12::text, s.music_track),
+    chat_tips        = COALESCE($13::text[], s.chat_tips)
 FROM old
 WHERE s.id = old.id
 RETURNING s.id, s.title, s.synopsis, s.main_plot, s.thumbnail_url, s.difficulty_level,
           s.reward_trophies, s.penalty_trophies, s.resolution, s.hints, s.is_published, s.llm_model, s.music_track, s.created_at,
-          old.thumbnail_url AS old_thumbnail_url
+          s.chat_tips, old.thumbnail_url AS old_thumbnail_url
 `
 
 type AdminUpdateCaseParams struct {
@@ -624,6 +666,7 @@ type AdminUpdateCaseParams struct {
 	IsPublished     *bool
 	LlmModel        *string
 	MusicTrack      *string
+	ChatTips        []string
 	ID              string
 }
 
@@ -642,6 +685,7 @@ type AdminUpdateCaseRow struct {
 	LlmModel        string
 	MusicTrack      string
 	CreatedAt       time.Time
+	ChatTips        []string
 	OldThumbnailUrl string
 }
 
@@ -661,6 +705,7 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		arg.IsPublished,
 		arg.LlmModel,
 		arg.MusicTrack,
+		arg.ChatTips,
 		arg.ID,
 	)
 	var i AdminUpdateCaseRow
@@ -679,6 +724,7 @@ func (q *Queries) AdminUpdateCase(ctx context.Context, arg AdminUpdateCaseParams
 		&i.LlmModel,
 		&i.MusicTrack,
 		&i.CreatedAt,
+		&i.ChatTips,
 		&i.OldThumbnailUrl,
 	)
 	return i, err
@@ -733,25 +779,26 @@ func (q *Queries) AdminUpdateScene(ctx context.Context, arg AdminUpdateScenePara
 }
 
 const adminUpdateSuspect = `-- name: AdminUpdateSuspect :one
-WITH old AS (SELECT o.id, o.avatar_url FROM suspects o WHERE o.id = $13 AND o.case_id = $14 FOR UPDATE)
+WITH old AS (SELECT o.id, o.avatar_url FROM suspects o WHERE o.id = $14 AND o.case_id = $15 FOR UPDATE)
 UPDATE suspects s SET
     name                   = COALESCE($1::text, s.name),
     role                   = COALESCE($2::text, s.role),
     avatar_url             = COALESCE($3::text, s.avatar_url),
     initial_testimony      = COALESCE($4::text, s.initial_testimony),
-    is_culprit             = COALESCE($5::boolean, s.is_culprit),
-    display_order          = COALESCE($6::int, s.display_order),
-    relationship_to_victim = COALESCE($7::text, s.relationship_to_victim),
-    persona                = COALESCE($8::text, s.persona),
-    public_alibi           = COALESCE($9::text, s.public_alibi),
-    hidden_truth           = COALESCE($10::text, s.hidden_truth),
-    confession_triggers    = COALESCE($11::text, s.confession_triggers),
-    confession_keywords    = COALESCE($12::text[], s.confession_keywords)
+    public_knowledge       = COALESCE($5::text, s.public_knowledge),
+    is_culprit             = COALESCE($6::boolean, s.is_culprit),
+    display_order          = COALESCE($7::int, s.display_order),
+    relationship_to_victim = COALESCE($8::text, s.relationship_to_victim),
+    persona                = COALESCE($9::text, s.persona),
+    public_alibi           = COALESCE($10::text, s.public_alibi),
+    hidden_truth           = COALESCE($11::text, s.hidden_truth),
+    confession_triggers    = COALESCE($12::text, s.confession_triggers),
+    confession_keywords    = COALESCE($13::text[], s.confession_keywords)
 FROM old
 WHERE s.id = old.id
 RETURNING s.id, s.case_id, s.name, s.role, s.avatar_url, s.initial_testimony, s.is_culprit, s.display_order,
           s.relationship_to_victim, s.persona, s.public_alibi, s.hidden_truth, s.confession_triggers, s.confession_keywords,
-          old.avatar_url AS old_avatar_url
+          s.public_knowledge, old.avatar_url AS old_avatar_url
 `
 
 type AdminUpdateSuspectParams struct {
@@ -759,6 +806,7 @@ type AdminUpdateSuspectParams struct {
 	Role                 *string
 	AvatarUrl            *string
 	InitialTestimony     *string
+	PublicKnowledge      *string
 	IsCulprit            *bool
 	DisplayOrder         *int32
 	RelationshipToVictim *string
@@ -786,6 +834,7 @@ type AdminUpdateSuspectRow struct {
 	HiddenTruth          string
 	ConfessionTriggers   string
 	ConfessionKeywords   []string
+	PublicKnowledge      string
 	OldAvatarUrl         string
 }
 
@@ -796,6 +845,7 @@ func (q *Queries) AdminUpdateSuspect(ctx context.Context, arg AdminUpdateSuspect
 		arg.Role,
 		arg.AvatarUrl,
 		arg.InitialTestimony,
+		arg.PublicKnowledge,
 		arg.IsCulprit,
 		arg.DisplayOrder,
 		arg.RelationshipToVictim,
@@ -823,13 +873,14 @@ func (q *Queries) AdminUpdateSuspect(ctx context.Context, arg AdminUpdateSuspect
 		&i.HiddenTruth,
 		&i.ConfessionTriggers,
 		&i.ConfessionKeywords,
+		&i.PublicKnowledge,
 		&i.OldAvatarUrl,
 	)
 	return i, err
 }
 
 const getAppSettings = `-- name: GetAppSettings :one
-SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at
+SELECT daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens
 FROM app_settings
 WHERE id
 `
@@ -839,6 +890,7 @@ type GetAppSettingsRow struct {
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedAt          time.Time
+	MaxTokens          int32
 }
 
 func (q *Queries) GetAppSettings(ctx context.Context) (GetAppSettingsRow, error) {
@@ -849,13 +901,14 @@ func (q *Queries) GetAppSettings(ctx context.Context) (GetAppSettingsRow, error)
 		&i.TokenResetTime,
 		&i.TokenResetTimezone,
 		&i.UpdatedAt,
+		&i.MaxTokens,
 	)
 	return i, err
 }
 
 const seedAppSettings = `-- name: SeedAppSettings :exec
-INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone)
-VALUES ($1, $2, $3)
+INSERT INTO app_settings (daily_tokens, token_reset_time, token_reset_timezone, max_tokens)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT (id) DO NOTHING
 `
 
@@ -863,27 +916,35 @@ type SeedAppSettingsParams struct {
 	DailyTokens        int32
 	TokenResetTime     string
 	TokenResetTimezone string
+	MaxTokens          int32
 }
 
 // First startup only: an existing row (set from the admin panel) is never overwritten.
 func (q *Queries) SeedAppSettings(ctx context.Context, arg SeedAppSettingsParams) error {
-	_, err := q.db.Exec(ctx, seedAppSettings, arg.DailyTokens, arg.TokenResetTime, arg.TokenResetTimezone)
+	_, err := q.db.Exec(ctx, seedAppSettings,
+		arg.DailyTokens,
+		arg.TokenResetTime,
+		arg.TokenResetTimezone,
+		arg.MaxTokens,
+	)
 	return err
 }
 
 const updateAppSettings = `-- name: UpdateAppSettings :one
 UPDATE app_settings SET
     daily_tokens         = $1,
-    token_reset_time     = $2,
-    token_reset_timezone = $3,
+    max_tokens           = $2,
+    token_reset_time     = $3,
+    token_reset_timezone = $4,
     updated_at           = now(),
-    updated_by           = $4
+    updated_by           = $5
 WHERE id
-RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at
+RETURNING daily_tokens, token_reset_time, token_reset_timezone, updated_at, max_tokens
 `
 
 type UpdateAppSettingsParams struct {
 	DailyTokens        int32
+	MaxTokens          int32
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedBy          *string
@@ -894,11 +955,13 @@ type UpdateAppSettingsRow struct {
 	TokenResetTime     string
 	TokenResetTimezone string
 	UpdatedAt          time.Time
+	MaxTokens          int32
 }
 
 func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsParams) (UpdateAppSettingsRow, error) {
 	row := q.db.QueryRow(ctx, updateAppSettings,
 		arg.DailyTokens,
+		arg.MaxTokens,
 		arg.TokenResetTime,
 		arg.TokenResetTimezone,
 		arg.UpdatedBy,
@@ -909,6 +972,7 @@ func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsPa
 		&i.TokenResetTime,
 		&i.TokenResetTimezone,
 		&i.UpdatedAt,
+		&i.MaxTokens,
 	)
 	return i, err
 }

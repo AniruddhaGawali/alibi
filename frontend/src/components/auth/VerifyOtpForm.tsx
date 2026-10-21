@@ -32,7 +32,7 @@ export default function VerifyOtpForm() {
       try {
         await startSession(session)
         deletePendingOtpEmail()
-        navigate('/onboarding/avatar')
+        navigate('/onboarding/avatar?new=1')
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Could not load your profile')
       }

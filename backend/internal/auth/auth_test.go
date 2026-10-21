@@ -66,6 +66,8 @@ func (f *fakeStore) GetByID(_ context.Context, id string) (*user.User, error) {
 }
 
 func (f *fakeStore) SetAvatarDefault(context.Context, string, int) (string, error) { return "", nil }
+func (f *fakeStore) SetPlayerMode(context.Context, string, string) error           { return nil }
+func (f *fakeStore) SetUsername(context.Context, string, string) error             { return nil }
 func (f *fakeStore) SetAvatarCustom(context.Context, string, string, string) (string, error) {
 	return "", nil
 }

@@ -24,6 +24,7 @@ type fakeStore struct {
 	u       *User
 	path    string // object path of the custom avatar
 	failSet error
+	taken   string // a username another player holds
 }
 
 func (f *fakeStore) Create(context.Context, string, string, string, int) (*User, error) {
@@ -38,6 +39,17 @@ func (f *fakeStore) SetAvatarDefault(_ context.Context, _ string, n int) (string
 	old := f.path
 	f.u.AvatarDefault, f.u.AvatarURL, f.path = &n, nil, ""
 	return old, nil
+}
+func (f *fakeStore) SetPlayerMode(_ context.Context, _ string, mode string) error {
+	f.u.PlayerMode = mode
+	return nil
+}
+func (f *fakeStore) SetUsername(_ context.Context, _ string, name string) error {
+	if strings.EqualFold(name, f.taken) {
+		return ErrUsernameTaken
+	}
+	f.u.Username = name
+	return nil
 }
 func (f *fakeStore) SetAvatarCustom(_ context.Context, _ string, url, path string) (string, error) {
 	if f.failSet != nil {
@@ -331,5 +343,71 @@ func TestAvatarDecodeConcurrencyIsBounded(t *testing.T) {
 	h.SetAvatar(rec, multipartReq(t, nil, pngBytes(40, 40)))
 	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("got %d", rec.Code)
+	}
+}
+
+func TestSetModeSavesAndProfileReturnsIt(t *testing.T) {
+	h, st, _ := newHandler(t)
+	st.u.PlayerMode = ModeInvestigator
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PUT", "/api/user/mode", strings.NewReader(`{"mode":"master_sleuth"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.SetMode(rec, req)
+	if rec.Code != 200 || st.u.PlayerMode != ModeMasterSleuth {
+		t.Fatalf("%d %s mode=%q", rec.Code, rec.Body, st.u.PlayerMode)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Profile(rec, httptest.NewRequest("GET", "/api/user/profile", nil))
+	var out struct {
+		Data profileResp `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if out.Data.PlayerMode != ModeMasterSleuth {
+		t.Fatalf("profile mode = %q", out.Data.PlayerMode)
+	}
+}
+
+func TestSetModeRejectsUnknownMode(t *testing.T) {
+	for _, body := range []string{`{"mode":"easy"}`, `{}`, `{"mode":"investigator","x":1}`} {
+		h, st, _ := newHandler(t)
+		st.u.PlayerMode = ModeInvestigator
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("PUT", "/api/user/mode", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		h.SetMode(rec, req)
+		if rec.Code != 400 && rec.Code != 422 {
+			t.Fatalf("%s: got %d", body, rec.Code)
+		}
+		if st.u.PlayerMode != ModeInvestigator {
+			t.Fatalf("%s: mode changed to %q", body, st.u.PlayerMode)
+		}
+	}
+}
+
+func TestSetUsername(t *testing.T) {
+	h, st, _ := newHandler(t)
+	st.taken = "watson"
+	cases := []struct {
+		body string
+		code int
+		want string
+	}{
+		{`{"username":"Holmes_2"}`, 200, "Holmes_2"},
+		{`{"username":"WATSON"}`, 409, "Holmes_2"},
+		{`{"username":"ab"}`, 422, "Holmes_2"},
+		{`{"username":"bad name"}`, 422, "Holmes_2"},
+		{`{}`, 422, "Holmes_2"},
+		{`{"username":"lestrade","x":1}`, 400, "Holmes_2"},
+	}
+	for _, c := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("PUT", "/api/user/username", strings.NewReader(c.body))
+		req.Header.Set("Content-Type", "application/json")
+		h.SetUsername(rec, req)
+		if rec.Code != c.code || st.u.Username != c.want {
+			t.Fatalf("%s: got %d %s, username %q", c.body, rec.Code, rec.Body, st.u.Username)
+		}
 	}
 }

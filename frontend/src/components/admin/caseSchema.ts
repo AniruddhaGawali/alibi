@@ -17,6 +17,7 @@ const KEYWORD_RE = /^[a-z0-9]{2,40}(\+[a-z0-9]{2,40}){0,4}$/
 export const DEFAULT_MODEL = 'google/gemma-4-31b-it'
 export const MIN_SUSPECTS = 2
 export const HINT_COUNT = 3
+export const TIP_COUNT = 5
 
 /** Form value for "no case track": Radix Select cannot hold '', the API's main-theme value. */
 export const MAIN_THEME = 'main'
@@ -55,6 +56,7 @@ const suspectSchema = z
     role: z.string().trim().min(1, 'Enter their role, e.g. the butler').max(200, 'At most 200 characters'),
     relationship_to_victim: z.string().trim().max(500, 'At most 500 characters'),
     avatar: imageValueSchema,
+    public_knowledge: z.string().trim().max(4000, 'At most 4000 characters'),
     initial_testimony: z.string().trim().min(1, 'Enter what they first tell the detective').max(4000, 'At most 4000 characters'),
     is_culprit: z.boolean(),
     persona: z.string().trim().max(4000, 'At most 4000 characters'),
@@ -109,6 +111,7 @@ export const caseSchema = z
     main_plot: z.string().trim().max(10000, 'At most 10000 characters'),
     resolution: z.string().trim().max(10000, 'At most 10000 characters'),
     hints: z.array(z.string().trim().max(1000, 'At most 1000 characters')).length(HINT_COUNT),
+    chat_tips: z.array(z.string().trim().max(300, 'At most 300 characters')).length(TIP_COUNT),
     is_published: z.boolean(),
     suspects: z.array(suspectSchema).max(12, 'At most 12 suspects'),
     scenes: z.array(sceneSchema).max(12, 'At most 12 scenes'),
@@ -143,6 +146,7 @@ export const emptySuspect = (): SuspectFormValues => ({
   role: '',
   relationship_to_victim: '',
   avatar: emptyImage(),
+  public_knowledge: '',
   initial_testimony: '',
   is_culprit: false,
   persona: '',
@@ -169,6 +173,7 @@ export function toFormValues(c?: AdminCaseDetail): CaseFormValues {
       main_plot: '',
       resolution: '',
       hints: ['', '', ''],
+      chat_tips: Array.from({ length: TIP_COUNT }, () => ''),
       is_published: false,
       suspects: [],
       scenes: [],
@@ -187,6 +192,7 @@ export function toFormValues(c?: AdminCaseDetail): CaseFormValues {
     main_plot: c.main_plot,
     resolution: c.resolution,
     hints: Array.from({ length: HINT_COUNT }, (_, i) => c.hints[i] ?? ''),
+    chat_tips: Array.from({ length: TIP_COUNT }, (_, i) => c.chat_tips?.[i] ?? ''),
     is_published: c.is_published,
     suspects: c.suspects.map((s) => ({
       id: s.id,
@@ -194,6 +200,7 @@ export function toFormValues(c?: AdminCaseDetail): CaseFormValues {
       role: s.role,
       relationship_to_victim: s.relationship_to_victim,
       avatar: emptyImage(s.avatar_url),
+      public_knowledge: s.public_knowledge,
       initial_testimony: s.initial_testimony,
       is_culprit: s.is_culprit,
       persona: s.persona,
@@ -217,6 +224,7 @@ export function caseFields(v: CaseFormValues): Omit<AdminCaseFields, 'thumbnail_
     penalty_trophies: Number(v.penalty_trophies),
     resolution: v.resolution,
     hints: v.hints.filter(Boolean),
+    chat_tips: v.chat_tips.filter(Boolean),
     llm_model: v.llm_model,
     music_track: v.music_track === MAIN_THEME ? '' : v.music_track,
   }
@@ -228,6 +236,7 @@ export function suspectFields(s: SuspectFormValues, avatarUrl: string, order: nu
     role: s.role,
     avatar_url: avatarUrl,
     initial_testimony: s.initial_testimony,
+    public_knowledge: s.public_knowledge,
     is_culprit: s.is_culprit,
     display_order: order,
     relationship_to_victim: s.relationship_to_victim,
@@ -248,6 +257,9 @@ export function changedFields<T extends object>(next: T, prev: Partial<T> | unde
   if (!prev) return next
   const out: Partial<T> = {}
   for (const key of Object.keys(next) as (keyof T)[]) {
+    // A field the loaded case does not have (cached from before it existed) is not a change while it is still empty.
+    const value = next[key] as unknown
+    if (prev[key] === undefined && (value === '' || (Array.isArray(value) && value.length === 0))) continue
     if (JSON.stringify(next[key]) !== JSON.stringify(prev[key])) out[key] = next[key]
   }
   return out
