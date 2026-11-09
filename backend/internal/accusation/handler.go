@@ -31,9 +31,17 @@ func (l *RedisLeaderboard) Incr(ctx context.Context, userID string, delta int64)
 }
 
 type Handler struct {
-	store  Store
-	board  Leaderboard
-	userID func(context.Context) string // auth.UserID in production
+	store   Store
+	board   Leaderboard
+	userID  func(context.Context) string // auth.UserID in production
+	changed func()                       // after a score moved; nil: nothing
+}
+
+// OnScoreChange runs fn after an accusation moves the player's trophies (the
+// dashboard drops its in-memory leaderboard).
+func (h *Handler) OnScoreChange(fn func()) *Handler {
+	h.changed = fn
+	return h
 }
 
 func NewHandler(store Store, board Leaderboard, userID func(context.Context) string) *Handler {
@@ -86,6 +94,9 @@ func (h *Handler) Accuse(w http.ResponseWriter, r *http.Request) {
 	if out.Change != 0 {
 		if err := h.board.Incr(context.WithoutCancel(r.Context()), uid, out.Change); err != nil {
 			utils.LogErrorCtx(r.Context(), "leaderboard update failed", "user_id", uid, "delta", out.Change, "err", err)
+		}
+		if h.changed != nil {
+			h.changed()
 		}
 	}
 	utils.SuccessResponse(w, http.StatusOK, out)

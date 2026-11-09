@@ -49,11 +49,13 @@ type Config struct {
 	// Token economy and chat storage.
 	// The next three only seed app_settings on the first startup; after that they are
 	// edited from the admin panel (GET/PUT /api/admin/config).
-	DailyTokens           int    // first-startup seed of the daily allowance (1-100); the admin panel owns it after that
-	TokenResetTime        string // HH:MM the daily reset runs at
-	TokenResetTimezone    string // IANA zone the reset time is read in
-	MongoDatabase         string // database holding chat_messages
-	ChatWorkerConcurrency int    // chat storage consumers in the API process
+	DailyTokens           int           // first-startup seed of the daily allowance (1-100); the admin panel owns it after that
+	TokenResetTime        string        // HH:MM the daily reset runs at
+	TokenResetTimezone    string        // IANA zone the reset time is read in
+	MongoDatabase         string        // database holding chat_messages
+	ChatWorkerConcurrency int           // chat storage consumers in the API process
+	ChatWorkerPopTimeout  time.Duration // how long an idle chat consumer waits per Redis BRPOP
+	ChatMonitorEvery      time.Duration // how often the chat queue depths are sampled
 
 	// Image object storage (Supabase Storage). Optional: when SUPABASE_URL is
 	// empty, custom avatar uploads are disabled.
@@ -74,6 +76,7 @@ type Config struct {
 	CacheCatalogTTL   time.Duration // server-side TTL of case content (stories, briefing, suspects)
 	CacheStaticMaxAge time.Duration // how long browsers reuse case content without asking
 	CacheResultMaxAge time.Duration // how long browsers reuse a closed case's result (it never changes)
+	LeaderboardTTL    time.Duration // how long each API process keeps the top players in memory (0 = off)
 
 	// AuthFailOpen keeps signed-in players working while Redis is down (see auth.Blacklist.SetFailOpen).
 	AuthFailOpen bool
@@ -111,6 +114,7 @@ type Config struct {
 
 	// Email worker process.
 	WorkerConcurrency  int           // parallel consumers
+	WorkerPopTimeout   time.Duration // how long an idle email consumer waits per Redis BRPOP
 	WorkerHTTPAddr     string        // health endpoint of the worker
 	WorkerMonitorEvery time.Duration // how often queue depths are sampled and logged
 }
@@ -266,7 +270,9 @@ func load(required []string) (*Config, error) {
 		TokenResetTime:        envStr("TOKEN_RESET_TIME", "00:00"),
 		TokenResetTimezone:    envStr("TOKEN_RESET_TIMEZONE", "UTC"),
 		MongoDatabase:         envStr("MONGO_DATABASE", "alibi"),
-		ChatWorkerConcurrency: envInt("CHAT_WORKER_CONCURRENCY", 2, 1, 32),
+		ChatWorkerConcurrency: envInt("CHAT_WORKER_CONCURRENCY", 1, 1, 32),
+		ChatWorkerPopTimeout:  time.Duration(envInt("CHAT_WORKER_POP_TIMEOUT_SECONDS", 30, 1, 300)) * time.Second,
+		ChatMonitorEvery:      time.Duration(envInt("CHAT_MONITOR_SECONDS", 900, 1, 86400)) * time.Second,
 
 		SupabaseURL:            strings.TrimRight(os.Getenv("SUPABASE_URL"), "/"),
 		SupabaseServiceRoleKey: os.Getenv("SUPABASE_SERVICE_ROLE_KEY"),
@@ -283,6 +289,7 @@ func load(required []string) (*Config, error) {
 		CacheCatalogTTL:   time.Duration(envInt("CACHE_CATALOG_TTL_SECONDS", 3600, 1, 604800)) * time.Second,
 		CacheStaticMaxAge: time.Duration(envInt("CACHE_BROWSER_MAX_AGE_SECONDS", 3600, 0, 2592000)) * time.Second,
 		CacheResultMaxAge: time.Duration(envInt("CACHE_RESULT_MAX_AGE_SECONDS", 86400, 0, 2592000)) * time.Second,
+		LeaderboardTTL:    time.Duration(envInt("LEADERBOARD_MEMORY_TTL_SECONDS", 60, 0, 3600)) * time.Second,
 
 		AuthFailOpen: envBool("AUTH_FAIL_OPEN_WHEN_REDIS_DOWN", true),
 
@@ -311,9 +318,10 @@ func load(required []string) (*Config, error) {
 		EmailFrom:     envStr("EMAIL_FROM", os.Getenv("BREVO_SMTP_USER")),
 
 		EmbedEmailWorker:   envBool("EMBED_EMAIL_WORKER", false),
-		WorkerConcurrency:  envInt("WORKER_CONCURRENCY", 4, 1, 64),
+		WorkerConcurrency:  envInt("WORKER_CONCURRENCY", 1, 1, 64),
+		WorkerPopTimeout:   time.Duration(envInt("WORKER_POP_TIMEOUT_SECONDS", 30, 1, 300)) * time.Second,
 		WorkerHTTPAddr:     envStr("WORKER_HTTP_ADDR", ":8081"),
-		WorkerMonitorEvery: time.Duration(envInt("WORKER_MONITOR_SECONDS", 30, 1, 3600)) * time.Second,
+		WorkerMonitorEvery: time.Duration(envInt("WORKER_MONITOR_SECONDS", 900, 1, 86400)) * time.Second,
 	}, nil
 }
 

@@ -87,6 +87,9 @@ services:
   # other by service name instead of localhost.
 
   api:
+    # Longer than the queue pop timeouts (30 s default), so an idle consumer can finish
+    # its BRPOP and the process exits cleanly instead of being killed.
+    stop_grace_period: 40s
     profiles: ["app"]
     build:
       context: ./backend
@@ -116,6 +119,8 @@ services:
       TOKEN_RESET_TIMEZONE: ${TOKEN_RESET_TIMEZONE:-}
       MONGO_DATABASE: ${MONGO_DATABASE:-}
       CHAT_WORKER_CONCURRENCY: ${CHAT_WORKER_CONCURRENCY:-}
+      CHAT_WORKER_POP_TIMEOUT_SECONDS: ${CHAT_WORKER_POP_TIMEOUT_SECONDS:-}
+      CHAT_MONITOR_SECONDS: ${CHAT_MONITOR_SECONDS:-}
       SIGNUP_IP_DAILY_MAX: ${SIGNUP_IP_DAILY_MAX:-}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -140,6 +145,7 @@ services:
       GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-}
       AUTH_FAIL_OPEN_WHEN_REDIS_DOWN: ${AUTH_FAIL_OPEN_WHEN_REDIS_DOWN:-}
       CACHE_ENABLED: ${CACHE_ENABLED:-}
+      LEADERBOARD_MEMORY_TTL_SECONDS: ${LEADERBOARD_MEMORY_TTL_SECONDS:-}
       CACHE_USER_TTL_SECONDS: ${CACHE_USER_TTL_SECONDS:-}
       CACHE_WALLET_TTL_SECONDS: ${CACHE_WALLET_TTL_SECONDS:-}
       CACHE_CATALOG_TTL_SECONDS: ${CACHE_CATALOG_TTL_SECONDS:-}
@@ -173,6 +179,7 @@ services:
   # sends through Brevo. It has no published port, so it can be scaled:
   #   docker compose --profile app up -d --scale email-worker=3
   email-worker:
+    stop_grace_period: 40s # see the api service
     profiles: ["app"]
     build:
       context: ./backend
@@ -187,6 +194,7 @@ services:
       BREVO_SMTP_PASS: ${BREVO_SMTP_PASS:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
       WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+      WORKER_POP_TIMEOUT_SECONDS: ${WORKER_POP_TIMEOUT_SECONDS:-}
       WORKER_MONITOR_SECONDS: ${WORKER_MONITOR_SECONDS:-}
       REDIS_POOL_SIZE: ${REDIS_POOL_SIZE:-}
       DB_CONNECT_TIMEOUT_SECONDS: ${DB_CONNECT_TIMEOUT_SECONDS:-}

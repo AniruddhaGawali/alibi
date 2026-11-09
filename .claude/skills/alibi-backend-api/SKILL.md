@@ -134,7 +134,7 @@ Caching is wired in one place, the route table in `cmd/api/main.go`; handlers an
 
 ## Leaderboard: Redis set, Postgres truth
 
-`GET /api/dashboard/leaderboard` reads the Redis sorted set `leaderboard` (member = user id, score = trophies; `dashboard.RedisBoard`). `POST /api/cases/{id}/accuse` moves it with `ZINCRBY` by the exact trophy change after the Postgres commit (best effort, never fails the request). The set is trusted only while `leaderboard:synced` exists (5 min TTL): when it is missing (first read, expiry, flushed or unreachable Redis) the same dashboard read serves the top players from Postgres and rebuilds the set from it, which also repairs drift. Anything else that changes `users.trophies` must `ZINCRBY` it too.
+`GET /api/dashboard/leaderboard` reads the Redis sorted set `leaderboard` (member = user id, score = trophies; `dashboard.RedisBoard`). `POST /api/cases/{id}/accuse` moves it with `ZINCRBY` by the exact trophy change after the Postgres commit (best effort, never fails the request). The set is trusted only while `leaderboard:synced` exists (5 min TTL): when it is missing (first read, expiry, flushed or unreachable Redis) the same dashboard read serves the top players from Postgres and rebuilds the set from it, which also repairs drift. Anything else that changes `users.trophies` must `ZINCRBY` it too. On top of that each API process keeps the top players in memory for `LEADERBOARD_MEMORY_TTL_SECONDS` (default 60, `dashboard.Handler.WithMemoryTTL`), so most views send Redis nothing; the accuse route drops it through `OnScoreChange(dashH.Forget)`, so a change shows on that replica at once and on others within the TTL. A new trophy writer must call `Forget` as well.
 
 ## Auth in handlers
 
@@ -185,6 +185,8 @@ Handlers only **publish** an `email.Message` (`email.Publish(ctx, broker, msg)`)
 ## Queues
 
 Use `queue.RedisListBroker` for background work. A handler returns `*models.DlqError` to dead-letter immediately, `*models.WorkerError` to re-queue with rewritten data, or any other error to retry. Every message carries its own ID and attempt count; retries back off exponentially and after the configured attempts (default 5) the message goes to the DLQ. `Consume` returns `queue.ErrNoMessage` when nothing arrived; treat that as "poll again", not a failure. Handlers must be idempotent, since a message can be delivered more than once and a process crash mid-handler loses the in-flight message (Redis lists have no ack).
+
+Production Redis is billed per command (Upstash, 500k a month), and every idle consumer sends a `BRPOP` per pop timeout even with nothing queued. Anything that polls Redis on a timer (consumers, monitors, scheduled checks) needs an env-tunable interval with a frugal default (`WORKER_POP_TIMEOUT_SECONDS` / `CHAT_WORKER_POP_TIMEOUT_SECONDS` 30, concurrency 1, monitors every 900 s), backs off on errors instead of retrying every second, and remembers in memory what it already knows (as `jobs.TokenReset` does with the finished day). go-redis does not interrupt a `BRPOP` on context cancel, so shutdown can take up to one pop timeout.
 
 ## Handler skeleton
 
