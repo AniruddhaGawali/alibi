@@ -190,3 +190,22 @@ func TestTokenResetCatchUp(t *testing.T) {
 		t.Fatal("ran twice")
 	}
 }
+
+// Once a day is done, later checks that day stay in memory and send Redis nothing.
+func TestTokenResetRemembersFinishedDay(t *testing.T) {
+	w := &fakeWallet{}
+	at := time.Date(2026, 10, 19, 0, 0, 1, 0, time.UTC)
+	job, mr := newJob(t, w, at)
+	job.Run()
+	before := mr.CommandCount()
+	job.now = func() time.Time { return at.Add(time.Hour) }
+	job.Run()
+	if w.resets != 1 || mr.CommandCount() != before {
+		t.Fatalf("resets=%d, redis commands %d -> %d", w.resets, before, mr.CommandCount())
+	}
+	job.now = func() time.Time { return at.Add(24 * time.Hour) }
+	job.Run()
+	if w.resets != 2 {
+		t.Fatalf("next day: %d", w.resets)
+	}
+}

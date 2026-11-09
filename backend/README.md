@@ -47,11 +47,12 @@ In production set `TRUSTED_PROXIES` to the exact addresses/CIDRs of your reverse
 1. `signup` / `resend-otp` store the OTP in Redis and push `{to, otp, type, expires_at}` onto `queue:email:outbound`.
 2. A worker pops it and sends. Temporary failures (network, SMTP 4xx) are retried with exponential backoff (500 ms doubling, max 30 s, 5 attempts). Permanent ones (bad payload, SMTP 5xx) skip the retries.
 3. Either way a message that cannot be delivered ends in `queue:email:dlq` instead of blocking the worker. A message whose code has already expired (`expires_at`) is dropped, not sent.
-4. Several consumers per process (`WORKER_CONCURRENCY`) and several processes are safe; each message is popped by exactly one.
+4. Several consumers per process (`WORKER_CONCURRENCY`, default 1) and several processes are safe; each message is popped by exactly one.
+5. An idle consumer sends one `BRPOP` per `WORKER_POP_TIMEOUT_SECONDS` (default 30) and still picks a message up the instant it arrives. On a Redis billed per command (Upstash) every idle consumer costs about 86,400 commands a month at 30 s, so keep consumers few and the timeout long. Shutdown can wait up to one timeout, so give the container a longer stop grace period. The chat storage consumers in the API use `CHAT_WORKER_CONCURRENCY` and `CHAT_WORKER_POP_TIMEOUT_SECONDS` the same way.
 
 ### Watching it
 
-- Every `WORKER_MONITOR_SECONDS` the worker logs queue depths. A DLQ that grows is logged at **ERROR** ("email dead-letter queue is not empty", `dlq_depth`), re-reminded every 5 minutes while non-empty, and a backlog over 100 pending is logged at WARN (`queue_pending`). These records go to ClickHouse through OpenTelemetry; build the alert on `dlq_depth > 0`.
+- Every `WORKER_MONITOR_SECONDS` (default 900) the worker logs queue depths. A DLQ that grows is logged at **ERROR** ("email dead-letter queue is not empty", `dlq_depth`), re-reminded every 5 minutes while non-empty, and a backlog over 100 pending is logged at WARN (`queue_pending`). These records go to ClickHouse through OpenTelemetry; build the alert on `dlq_depth > 0`.
 - `GET :8081/health` on each worker returns 200 with `{"redis":"ok","queues":{"pending":N,"dead_letter":N}}` (503 if Redis is down). Compose uses it as the container healthcheck.
 
 ### Operating it

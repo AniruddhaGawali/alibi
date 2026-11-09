@@ -147,8 +147,8 @@ func run() error {
 	tokens := auth.NewTokenManager(cfg.JWTSecret, cfg.AccessTTL, cfg.RefreshTTL)
 	blacklist := auth.NewBlacklist(rdb)
 	blacklist.SetFailOpen(cfg.AuthFailOpen)
-  walletSvc := wallet.New(userStore, rdb, gameSettings.MaxTokens)
-  mailBroker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen))
+	walletSvc := wallet.New(userStore, rdb, gameSettings.MaxTokens)
+	mailBroker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen), queue.WithPopTimeout(cfg.WorkerPopTimeout))
 	authH := auth.NewHandler(auth.Deps{
 		Users:     userStore,
 		Tokens:    tokens,
@@ -191,7 +191,7 @@ func run() error {
 	// routes are never cached, they only invalidate.
 	hc := httpcache.New(rdb, auth.UserID)
 	hc.SetEnabled(cfg.CacheEnabled)
-	chatBroker := queue.NewRedisListBroker(rdb, chat.DLQ)
+	chatBroker := queue.NewRedisListBroker(rdb, chat.DLQ, queue.WithPopTimeout(cfg.ChatWorkerPopTimeout))
 	interrogationStore := interrogation.NewPGStore(pg)
 	chatH := chat.NewHandler(chatStore, auth.UserID, chat.WithPlay(func(ctx context.Context, userID, caseID string) (string, error) {
 		// The conversation belongs to the play-through the player is in now; with none, they see all of it.
@@ -231,7 +231,7 @@ func run() error {
 			OnStored(func(ctx context.Context, ev chat.Event) { hc.Bump(ctx, "u:"+ev.UserID+":chat:"+ev.CaseID) }).
 			Run(bgCtx, cfg.ChatWorkerConcurrency)
 	}()
-	go chat.Monitor(bgCtx, chatBroker, 30*time.Second)
+	go chat.Monitor(bgCtx, chatBroker, cfg.ChatMonitorEvery)
 	// Single-service hosting: run the email worker here too (EMBED_EMAIL_WORKER=true).
 	// Otherwise run cmd/worker as its own service.
 	emailWorkerDone := make(chan struct{})
@@ -267,7 +267,9 @@ func run() error {
 		adminOpts = append(adminOpts, admin.WithImages(images))
 	}
 	adminH := admin.NewHandler(admin.NewPGStore(pg), llmClients, auth.UserID, adminOpts...)
-	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID).WithBoard(dashboard.NewRedisBoard(rdb))
+	dashH := dashboard.NewHandler(dashboard.NewPGStore(pg), walletSvc, auth.UserID).
+		WithBoard(dashboard.NewRedisBoard(rdb)).WithMemoryTTL(cfg.LeaderboardTTL)
+	accuseH.OnScoreChange(dashH.Forget) // a won or lost case shows on this replica's leaderboard at once
 
 	// Cache policies. Server TTLs and the browser max-age come from the CACHE_* settings;
 	// tags say what a cached response depends on, and the Invalidates wrappers below drop

@@ -52,7 +52,7 @@ func run() error {
 	defer rdb.Close()
 
 	mailer := utils.NewMailer(cfg.BrevoSMTPHost, cfg.BrevoSMTPPort, cfg.BrevoSMTPUser, cfg.BrevoSMTPPass, cfg.EmailFrom)
-	broker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen))
+	broker := queue.NewRedisListBroker(rdb, email.DLQ, queue.WithDLQMaxLen(email.DLQMaxLen), queue.WithPopTimeout(cfg.WorkerPopTimeout))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

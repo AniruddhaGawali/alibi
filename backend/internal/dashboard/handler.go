@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
+	"time"
 
 	"backend/internal/user"
 	"backend/pkg/utils"
@@ -18,6 +20,22 @@ func (h *Handler) WithBoard(b Board) *Handler {
 	return h
 }
 
+// WithMemoryTTL keeps the top players in this process's memory for ttl, so most
+// leaderboard views send nothing to Redis or Postgres (Redis is billed per command).
+// A score change in this process drops it at once (Forget); one made on another
+// replica shows up within ttl. 0 turns it off.
+func (h *Handler) WithMemoryTTL(ttl time.Duration) *Handler {
+	h.topTTL = ttl
+	return h
+}
+
+// Forget drops the in-memory top players, so the next view reads the new scores.
+func (h *Handler) Forget() {
+	h.topMu.Lock()
+	h.top = nil
+	h.topMu.Unlock()
+}
+
 // Balancer reads the live token balance; *wallet.Service implements it.
 type Balancer interface {
 	Balance(ctx context.Context, userID string) (int64, error)
@@ -28,10 +46,18 @@ type Handler struct {
 	balance Balancer
 	userID  func(context.Context) string // auth.UserID in production
 	board   Board                        // Redis leaderboard; nil reads Postgres only
+
+	// In-memory top players (WithMemoryTTL). topMu is held while they are refreshed,
+	// so an expiry makes one read, not one per waiting request.
+	topMu  sync.Mutex
+	top    []Player // nil: not loaded or forgotten
+	topAt  time.Time
+	topTTL time.Duration
+	now    func() time.Time
 }
 
 func NewHandler(store Store, balance Balancer, userID func(context.Context) string) *Handler {
-	return &Handler{store: store, balance: balance, userID: userID}
+	return &Handler{store: store, balance: balance, userID: userID, now: time.Now}
 }
 
 type statsResp struct {
@@ -129,6 +155,23 @@ func (h *Handler) Leaderboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) topPlayers(ctx context.Context) ([]Player, error) {
+	if h.topTTL <= 0 {
+		return h.loadTop(ctx)
+	}
+	h.topMu.Lock()
+	defer h.topMu.Unlock()
+	if h.top != nil && h.now().Sub(h.topAt) < h.topTTL {
+		return h.top, nil // shared read-only: callers copy it into their response
+	}
+	players, err := h.loadTop(ctx)
+	if err != nil {
+		return nil, err
+	}
+	h.top, h.topAt = players, h.now()
+	return players, nil
+}
+
+func (h *Handler) loadTop(ctx context.Context) ([]Player, error) {
 	if h.board != nil {
 		entries, synced, err := h.board.Top(ctx, leaderboardSize)
 		if err != nil {

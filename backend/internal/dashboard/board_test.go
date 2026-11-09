@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -53,5 +55,53 @@ func TestLeaderboardRedisDown(t *testing.T) {
 	var got []row
 	if rec := call(t, h.Leaderboard, &got); rec.Code != 200 || len(got) != 1 {
 		t.Fatalf("redis down: %d %+v", rec.Code, got)
+	}
+}
+
+func TestLeaderboardMemoryCache(t *testing.T) {
+	players := []Player{{ID: uid, Username: "ann", Trophies: 30}, {ID: "p2", Username: "bob", Trophies: 20}}
+	st := &fakeStore{players: players}
+	h, mr := boardHandler(t, st)
+	clock := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	h.now = func() time.Time { return clock }
+	h.WithMemoryTTL(time.Minute)
+	call(t, h.Leaderboard, nil) // loads Redis and memory
+
+	before := mr.CommandCount()
+	mr.ZAdd(LeaderboardKey, 35, "p2")
+	var got []row
+	call(t, h.Leaderboard, &got)
+	if mr.CommandCount() != before || got[0].Username != "ann" || !got[0].IsMe {
+		t.Fatalf("want the remembered board and no redis call: %+v (commands %d -> %d)", got, before, mr.CommandCount())
+	}
+
+	// A score change in this process drops it at once.
+	h.Forget()
+	got = nil
+	call(t, h.Leaderboard, &got)
+	if got[0].Username != "bob" || got[0].Trophies != 35 {
+		t.Fatalf("after Forget: %+v", got)
+	}
+
+	// One from elsewhere shows up when the memory expires.
+	mr.ZAdd(LeaderboardKey, 50, uid)
+	clock = clock.Add(time.Minute)
+	got = nil
+	call(t, h.Leaderboard, &got)
+	if got[0].Username != "ann" || got[0].Trophies != 50 {
+		t.Fatalf("after expiry: %+v", got)
+	}
+}
+
+func TestLeaderboardMemoryCacheSkipsErrors(t *testing.T) {
+	st := &fakeStore{err: errors.New("pg down")}
+	h := newHandler(st, fakeBalance{}).WithMemoryTTL(time.Minute)
+	if rec := call(t, h.Leaderboard, nil); rec.Code != 500 {
+		t.Fatalf("%d", rec.Code)
+	}
+	st.err, st.players = nil, []Player{{ID: uid, Username: "ann", Trophies: 3}}
+	var got []row
+	if rec := call(t, h.Leaderboard, &got); rec.Code != 200 || len(got) != 1 {
+		t.Fatalf("an error must not be remembered: %d %+v", rec.Code, got)
 	}
 }
