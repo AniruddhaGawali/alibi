@@ -75,12 +75,16 @@ func TestAccuse(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			b := &fakeBoard{}
-			rec := do(newHandler(tc.store, b), tc.id, tc.body)
+			changed := 0
+			rec := do(newHandler(tc.store, b).OnScoreChange(func() { changed++ }), tc.id, tc.body)
 			if rec.Code != tc.status {
 				t.Fatalf("status = %d, want %d: %s", rec.Code, tc.status, rec.Body)
 			}
 			if len(b.calls) != len(tc.board) || (len(b.calls) == 1 && b.calls[0] != tc.board[0]) {
 				t.Fatalf("leaderboard calls = %v, want %v", b.calls, tc.board)
+			}
+			if changed != len(tc.board) {
+				t.Fatalf("score change hooks = %d, want %d", changed, len(tc.board))
 			}
 		})
 	}

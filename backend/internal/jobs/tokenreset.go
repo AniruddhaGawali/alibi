@@ -57,10 +57,13 @@ type TokenReset struct {
 	Sched  cron.Schedule // when the reset is due; nil: CatchUp does nothing
 	// Load, when set, is read before every CatchUp check and replaces Tokens, Loc
 	// and Sched, so an edit in the admin panel applies from the next check.
-	Load  func(context.Context) (Schedule, error)
-	mu    sync.Mutex // one check at a time; Load rewrites the fields above
-	now   func() time.Time
-	sleep func(time.Duration)
+	Load func(context.Context) (Schedule, error)
+	mu   sync.Mutex // one check at a time; Load rewrites the fields above
+	// doneDay is the last day this process saw finished, so the checks every minute
+	// after the reset ask Redis once a day instead of once a minute.
+	doneDay string
+	now     func() time.Time
+	sleep   func(time.Duration)
 }
 
 // apply sets the job's fields from s.
@@ -105,6 +108,9 @@ func (j *TokenReset) Run() {
 	defer cancel()
 
 	day := now().In(j.Loc).Format(time.DateOnly)
+	if day == j.doneDay {
+		return
+	}
 	lock := "lock:cron:token-reset:" + day
 	done := "done:cron:token-reset:" + day
 	finished, err := j.Redis.Exists(ctx, done).Result()
@@ -114,6 +120,7 @@ func (j *TokenReset) Run() {
 	}
 	if finished > 0 {
 		utils.LogInfo("token reset: already done for today", "day", day)
+		j.doneDay = day
 		return
 	}
 	ok, err := j.Redis.SetNX(ctx, lock, "1", lockTTL).Result()
@@ -148,6 +155,7 @@ func (j *TokenReset) Run() {
 	if err := j.Redis.Set(context.WithoutCancel(ctx), done, "1", doneTTL).Err(); err != nil {
 		utils.LogError("token reset: could not record the day as done", "day", day, "err", err)
 	}
+	j.doneDay = day
 	sleep(secondSweep)
 	if _, err := j.Wallet.ClearCache(ctx); err != nil {
 		utils.LogError("token reset: second cache sweep failed", "day", day, "err", err)
